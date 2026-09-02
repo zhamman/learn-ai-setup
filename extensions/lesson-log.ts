@@ -1,12 +1,13 @@
 /**
- * lesson-log — write clean, topic-based learning notes for Obsidian.
+ * lesson-log — keep clean topic notes and quiz history separate for Obsidian.
  *
- * This is NOT a transcript mirror.
+ * Subject layout:
+ *   <subject>/topic/<concept>.md
+ *   <subject>/quiz/<lesson>-diagnostic.md
+ *   <subject>/quiz/<concept>-lesson.md
  *
- * Durable lesson prose is written only when the model deliberately calls
- * `lesson_write`. Quiz questions/results are captured automatically, but they
- * are buffered until the quiz finishes so an in-flight `lesson_write` can land
- * first. This preserves lesson -> quiz ordering in the note.
+ * Durable lesson prose is written only through `lesson_write`.
+ * Quiz questions/results are captured automatically into the active quiz file.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -14,15 +15,32 @@ import { Type } from "@sinclair/typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+type QuizPhase = "diagnostic" | "lesson";
+
+type PendingQuiz = {
+	file: string;
+	slug: string;
+	phase: QuizPhase;
+	questionBlock: string;
+};
+
+type LessonState = {
+	subjectDir?: string | null;
+	lessonFile?: string | null;
+	lessonSlug?: string | null;
+	quizFile?: string | null;
+	quizSlug?: string | null;
+	quizPhase?: QuizPhase | null;
+};
+
 const LessonNoteParams = Type.Object({
 	topic: Type.String({
 		description:
-			"Stable short topic slug for the distinct concept being taught, e.g. 'inheritance', 'self', 'agent-harness', or 'transaction-isolation'. Reuse the same slug when revisiting the same concept.",
+			"Stable short concept slug, e.g. 'inheritance', 'context-window', or 'agent-harness'. Reuse the same slug when revisiting the same concept.",
 	}),
 	title: Type.Optional(
 		Type.String({
-			description:
-			"Optional human-readable note title. Defaults to title-casing the topic slug.",
+			description: "Optional human-readable note title. Defaults to title-casing the topic slug.",
 		}),
 	),
 });
@@ -30,14 +48,20 @@ const LessonNoteParams = Type.Object({
 const LessonWriteParams = Type.Object({
 	content: Type.String({
 		description:
-			"Clean standalone Markdown worth preserving in the active concept note. Write durable knowledge only — never conversational filler, process commentary, or a transcript.",
+			"Clean standalone Markdown worth preserving in the active concept note. Write durable knowledge only — never conversational filler, process commentary, quiz content, or a transcript.",
 	}),
 });
 
-type PendingQuiz = {
-	file: string;
-	questionBlock: string;
-};
+const LessonQuizContextParams = Type.Object({
+	topic: Type.String({
+		description:
+			"Stable slug for the thing being assessed. For the opening knowledge check, use the overall requested lesson/topic, e.g. 'context-engineering'.",
+	}),
+	phase: Type.Union([Type.Literal("diagnostic"), Type.Literal("lesson")], {
+		description:
+			"Use 'diagnostic' for the opening pre-instruction knowledge check. Ordinary concept quizzes during teaching are routed automatically by lesson_note and normally do not require this tool.",
+	}),
+});
 
 function slugify(input: string): string {
 	return input
@@ -78,26 +102,26 @@ function buildQuizQuestionBlock(
 		body.push("");
 		for (const option of options) body.push(`${option.index}. ${option.label}`);
 	}
-	return callout("question", "Quiz", body);
+	return callout("question", "Question", body);
 }
 
 function buildQuizResultBlock(details: any): string {
 	if (details?.status === "cancelled") {
-		return callout("warning", "Quiz — skipped", ["(user skipped)"]);
+		return callout("warning", "Result — skipped", ["(user skipped)"]);
 	}
 
 	if (details?.status === "unavailable") {
-		return callout("warning", "Quiz — unavailable", [details?.message || ""]);
+		return callout("warning", "Result — unavailable", [details?.message || ""]);
 	}
 
 	const dontKnow = details?.dontKnow === true;
 	const correct = details?.correct === true;
 	const type = dontKnow ? "question" : correct ? "success" : "failure";
 	const title = dontKnow
-		? "Quiz — I don't know"
+		? "Result — I don't know"
 		: correct
-			? "Quiz — correct ✓"
-			: "Quiz — incorrect ✗";
+			? "Result — correct ✓"
+			: "Result — incorrect ✗";
 	const body: string[] = [];
 
 	if (dontKnow) {
@@ -130,10 +154,10 @@ export default function lessonLog(pi: ExtensionAPI) {
 	let subjectDir: string | null = null;
 	let lessonFile: string | null = null;
 	let lessonSlug: string | null = null;
+	let quizFile: string | null = null;
+	let quizSlug: string | null = null;
+	let quizPhase: QuizPhase | null = null;
 
-	// Quiz questions are held here until their result arrives. Previously the
-	// question was appended as soon as the quiz UI opened, which could race ahead
-	// of a lesson_write call from the same teaching step.
 	const pendingQuizzes = new Map<string, PendingQuiz>();
 
 	let writeLock: Promise<void> = Promise.resolve();
@@ -144,6 +168,17 @@ export default function lessonLog(pi: ExtensionAPI) {
 			release = r;
 		});
 		return prev.then(fn).finally(() => release());
+	}
+
+	function persistState(): void {
+		pi.appendEntry("lesson-log", {
+			subjectDir,
+			lessonFile,
+			lessonSlug,
+			quizFile,
+			quizSlug,
+			quizPhase,
+		});
 	}
 
 	function appendToFile(file: string, text: string): void {
@@ -159,17 +194,74 @@ export default function lessonLog(pi: ExtensionAPI) {
 		fs.writeFileSync(file, current + prefix + trimmed + "\n", "utf-8");
 	}
 
+	function topicPath(slug: string): string | null {
+		if (!subjectDir) return null;
+		return path.join(subjectDir, "topic", `${slug}.md`);
+	}
+
+	function quizPath(slug: string, phase: QuizPhase): string | null {
+		if (!subjectDir) return null;
+		return path.join(subjectDir, "quiz", `${slug}-${phase}.md`);
+	}
+
+	function setQuizContext(topicInput: string, phase: QuizPhase): { file: string; slug: string } | null {
+		if (!subjectDir) return null;
+		const slug = slugify(topicInput);
+		if (!slug) return null;
+		const file = quizPath(slug, phase);
+		if (!file) return null;
+
+		quizSlug = slug;
+		quizPhase = phase;
+		quizFile = file;
+		return { file, slug };
+	}
+
+	function ensureQuizFile(file: string, slug: string, phase: QuizPhase): void {
+		if (fs.existsSync(file)) return;
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		const title = titleFromSlug(slug);
+		const heading = phase === "diagnostic" ? `${title} — Diagnostic` : `${title} — Lesson Quiz`;
+		const intro = phase === "diagnostic" ? "\nTaken before instruction.\n" : "";
+		fs.writeFileSync(file, `# ${heading}\n${intro}`, "utf-8");
+	}
+
+	function nextQuizNumber(file: string): number {
+		if (!fs.existsSync(file)) return 1;
+		const current = fs.readFileSync(file, "utf-8");
+		const matches = [...current.matchAll(/^## Quiz (\d+)\s*$/gm)];
+		let max = 0;
+		for (const match of matches) {
+			const value = Number(match[1]);
+			if (Number.isFinite(value) && value > max) max = value;
+		}
+		return max + 1;
+	}
+
+	function appendQuizUnit(
+		file: string,
+		slug: string,
+		phase: QuizPhase,
+		questionBlock: string,
+		resultBlock: string,
+	): void {
+		ensureQuizFile(file, slug, phase);
+		const number = nextQuizNumber(file);
+		appendToFile(file, `## Quiz ${number}\n\n${questionBlock}\n\n${resultBlock}`);
+	}
+
 	function activateLesson(
 		ctx: any,
 		topicInput: string,
 		titleInput?: string,
-	): { file: string; slug: string; created: boolean } | null {
+	): { file: string; slug: string; created: boolean; quizFile: string } | null {
 		if (!subjectDir) return null;
 
 		const slug = slugify(topicInput);
 		if (!slug) return null;
 
-		const file = path.join(subjectDir, `${slug}.md`);
+		const file = topicPath(slug);
+		if (!file) return null;
 		fs.mkdirSync(path.dirname(file), { recursive: true });
 		const created = !fs.existsSync(file);
 		if (created) {
@@ -179,7 +271,11 @@ export default function lessonLog(pi: ExtensionAPI) {
 
 		lessonSlug = slug;
 		lessonFile = file;
-		pi.appendEntry("lesson-log", { subjectDir, lessonFile, lessonSlug });
+
+		const quiz = setQuizContext(slug, "lesson");
+		if (!quiz) return null;
+
+		persistState();
 
 		if (ctx?.ui) {
 			const theme = ctx.ui.theme;
@@ -189,24 +285,38 @@ export default function lessonLog(pi: ExtensionAPI) {
 			);
 		}
 
-		return { file, slug, created };
+		return { file, slug, created, quizFile: quiz.file };
 	}
 
 	pi.on("session_start", async (_event, ctx: any) => {
-		let last:
-			| { subjectDir?: string | null; lessonFile?: string | null; lessonSlug?: string | null }
-			| undefined;
-
+		let last: LessonState | undefined;
 		for (const entry of ctx.sessionManager.getEntries()) {
 			if (entry.type === "custom" && entry.customType === "lesson-log") {
-				last = entry.data as any;
+				last = entry.data as LessonState;
 			}
 		}
 
-		if (last?.subjectDir) subjectDir = last.subjectDir;
-		if (last?.lessonFile && fs.existsSync(last.lessonFile)) {
-			lessonFile = last.lessonFile;
-			lessonSlug = last.lessonSlug ?? path.basename(last.lessonFile, ".md");
+		if (!last?.subjectDir) return;
+		subjectDir = last.subjectDir;
+		fs.mkdirSync(path.join(subjectDir, "topic"), { recursive: true });
+		fs.mkdirSync(path.join(subjectDir, "quiz"), { recursive: true });
+
+		if (last.lessonSlug) {
+			const slug = slugify(last.lessonSlug);
+			const file = topicPath(slug);
+			if (file && fs.existsSync(file)) {
+				lessonSlug = slug;
+				lessonFile = file;
+			}
+		}
+
+		if (last.quizSlug && last.quizPhase) {
+			setQuizContext(last.quizSlug, last.quizPhase);
+		} else if (lessonSlug) {
+			setQuizContext(lessonSlug, "lesson");
+		}
+
+		if (lessonFile) {
 			const theme = ctx.ui.theme;
 			ctx.ui.setStatus(
 				"lesson-log",
@@ -216,7 +326,7 @@ export default function lessonLog(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("learn", {
-		description: "Set the learning subject directory used by topic notes",
+		description: "Set the learning subject directory; creates topic/ and quiz/ beneath it",
 		handler: async (args, ctx: any) => {
 			const raw = args.trim();
 			if (!raw) {
@@ -225,18 +335,25 @@ export default function lessonLog(pi: ExtensionAPI) {
 			}
 
 			const resolved = path.isAbsolute(raw) ? raw : path.resolve(ctx.cwd, raw);
-			fs.mkdirSync(resolved, { recursive: true });
+			fs.mkdirSync(path.join(resolved, "topic"), { recursive: true });
+			fs.mkdirSync(path.join(resolved, "quiz"), { recursive: true });
+
 			subjectDir = resolved;
 			lessonFile = null;
 			lessonSlug = null;
-			pi.appendEntry("lesson-log", { subjectDir, lessonFile: null, lessonSlug: null });
+			quizFile = null;
+			quizSlug = null;
+			quizPhase = null;
+			pendingQuizzes.clear();
+			persistState();
+
 			ctx.ui.setStatus("lesson-log", undefined);
-			ctx.ui.notify(`Learning directory: ${resolved}`, "success");
+			ctx.ui.notify(`Learning directory: ${resolved}\nTopics: ${path.join(resolved, "topic")}\nQuizzes: ${path.join(resolved, "quiz")}`, "success");
 		},
 	});
 
 	pi.registerCommand("lesson", {
-		description: "Manually start or switch to a topic-based lesson note",
+		description: "Manually start or switch to a concept note",
 		handler: async (args, ctx: any) => {
 			if (!subjectDir) {
 				ctx.ui.notify("Set a learning directory first with /learn <dir>", "warning");
@@ -249,28 +366,72 @@ export default function lessonLog(pi: ExtensionAPI) {
 				return;
 			}
 
-			ctx.ui.notify(`Lesson note: ${result.file}`, "success");
+			ctx.ui.notify(`Topic note: ${result.file}\nLesson quizzes: ${result.quizFile}`, "success");
 		},
 	});
 
 	pi.registerCommand("lesson-stop", {
-		description: "Stop writing to the active lesson note",
+		description: "Stop writing topic notes and capturing quizzes",
 		handler: async (_args, ctx: any) => {
 			lessonFile = null;
 			lessonSlug = null;
-			pi.appendEntry("lesson-log", { subjectDir, lessonFile: null, lessonSlug: null });
+			quizFile = null;
+			quizSlug = null;
+			quizPhase = null;
+			pendingQuizzes.clear();
+			persistState();
 			ctx.ui.setStatus("lesson-log", undefined);
 			ctx.ui.notify("Lesson logging stopped", "info");
 		},
 	});
 
 	pi.registerCommand("lesson-status", {
-		description: "Show current learning directory and active lesson note",
+		description: "Show current learning directory, concept note, and quiz target",
 		handler: async (_args, ctx: any) => {
 			ctx.ui.notify(
-				`Learning directory: ${subjectDir ?? "(not set)"}\nLesson: ${lessonFile ?? "(not active)"}`,
+				`Learning directory: ${subjectDir ?? "(not set)"}\nTopic note: ${lessonFile ?? "(not active)"}\nQuiz file: ${quizFile ?? "(not active)"}`,
 				"info",
 			);
+		},
+	});
+
+	pi.registerTool({
+		name: "lesson_quiz_context",
+		label: "lesson quiz context",
+		description:
+			"Choose the quiz file before a quiz that happens without an active concept note. Use this BEFORE the opening pre-instruction knowledge check with phase='diagnostic' and the overall requested lesson/topic slug. During normal teaching, lesson_note automatically routes quizzes to quiz/<concept>-lesson.md, so this tool is usually unnecessary after instruction begins.",
+		promptSnippet:
+			"Before the opening diagnostic/probe quiz, call lesson_quiz_context({ topic: '<overall-lesson-slug>', phase: 'diagnostic' }). Once lesson_note is called for a concept, lesson quizzes are routed automatically.",
+		promptGuidelines: [
+			"Always call this before the first diagnostic quiz in a teach session so the learner's pre-instruction baseline is preserved.",
+			"For the diagnostic topic, use the overall requested lesson or subject being assessed, not the first concept node.",
+			"Use phase='diagnostic' for quizzes intended to gauge knowledge before teaching.",
+			"Do not repeatedly call this for ordinary concept quizzes. lesson_note automatically switches the quiz target to <concept>-lesson.md.",
+		],
+		parameters: LessonQuizContextParams,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			if (!subjectDir) {
+				return {
+					content: [{ type: "text", text: "No learning directory is configured. Ask the user to run /learn <subject-directory> first." }],
+					details: { status: "no-subject" },
+				};
+			}
+
+			const phase = params.phase as QuizPhase;
+			const result = setQuizContext(params.topic, phase);
+			if (!result) {
+				return {
+					content: [{ type: "text", text: "Invalid quiz topic. Use a short non-empty stable slug." }],
+					details: { status: "invalid-topic" },
+				};
+			}
+
+			persistState();
+			return {
+				content: [{ type: "text", text: `Quiz context set: ${result.file}` }],
+				details: { status: "active", file: result.file, topic: result.slug, phase },
+			};
 		},
 	});
 
@@ -278,27 +439,22 @@ export default function lessonLog(pi: ExtensionAPI) {
 		name: "lesson_note",
 		label: "lesson note",
 		description:
-			"Switch the active Obsidian learning note to the distinct concept you are about to teach. The human sets the subject directory once with /learn. The note is created if missing and reused if it already exists. Activating a note does NOT save ordinary assistant messages; use lesson_write for durable lesson material.",
+			"Switch the active Obsidian topic note to the distinct concept you are about to teach. Topic notes live under <subject>/topic/. This also automatically routes subsequent quizzes to <subject>/quiz/<concept>-lesson.md.",
 		promptSnippet:
-			"When teaching and a /learn directory is configured, call lesson_note BEFORE the first substantive explanation of each distinct concept, then use lesson_write to save only curated standalone teaching material.",
+			"Before teaching each distinct concept, call lesson_note. Then use lesson_write for durable prose. Any quiz after lesson_note is automatically stored separately in quiz/<concept>-lesson.md.",
 		promptGuidelines: [
-			"The user controls the subject directory with /learn <dir>. Never silently choose or change the subject directory yourself.",
+			"The user controls the subject directory with /learn <dir>. Never silently change it.",
 			"Before teaching a distinct concept, call lesson_note with a short stable topic slug.",
 			"Reuse the SAME topic slug when revisiting a concept.",
 			"Do not switch notes for clarifications, examples, quizzes, retries, researcher calls, or stylistic changes if the underlying concept is unchanged.",
-			"Choose concept-sized notes: 'inheritance', 'self', 'agent-harness', 'transaction-isolation'.",
+			"Choose concept-sized notes such as 'inheritance', 'context-window', or 'agent-harness'.",
 		],
 		parameters: LessonNoteParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (!subjectDir) {
 				return {
-					content: [
-						{
-							type: "text",
-							text: "No learning directory is configured. Ask the user to run /learn <subject-directory> once, then retry lesson_note.",
-						},
-					],
+					content: [{ type: "text", text: "No learning directory is configured. Ask the user to run /learn <subject-directory> once, then retry lesson_note." }],
 					details: { status: "no-subject" },
 				};
 			}
@@ -312,17 +468,13 @@ export default function lessonLog(pi: ExtensionAPI) {
 			}
 
 			return {
-				content: [
-					{
-						type: "text",
-						text: `${result.created ? "Created" : "Activated"} lesson note: ${result.file}`,
-					},
-				],
+				content: [{ type: "text", text: `${result.created ? "Created" : "Activated"} topic note: ${result.file}. Lesson quizzes route to: ${result.quizFile}` }],
 				details: {
 					status: "active",
 					file: result.file,
 					topic: result.slug,
 					created: result.created,
+					quizFile: result.quizFile,
 				},
 			};
 		},
@@ -332,16 +484,14 @@ export default function lessonLog(pi: ExtensionAPI) {
 		name: "lesson_write",
 		label: "lesson write",
 		description:
-			"Append intentionally curated, durable Markdown to the currently active concept note. Use this for standalone explanations, important examples, key distinctions, mental models, and useful diagram markup. Ordinary assistant messages are NOT saved automatically. Quiz questions and results are captured automatically and should not be duplicated with lesson_write.",
+			"Append intentionally curated, durable Markdown to the active concept note under <subject>/topic/. Never write quiz content here; quizzes are captured separately under <subject>/quiz/.",
 		promptSnippet:
-			"Use lesson_write to save only the durable knowledge from your teaching. If a quiz follows, complete lesson_write first; do not intentionally quiz before the durable explanation has been saved.",
+			"Use lesson_write to save only durable knowledge to the active topic note. If a quiz follows, finish lesson_write first; quiz capture goes to a separate file automatically.",
 		promptGuidelines: [
 			"Call lesson_write only when there is durable knowledge worth keeping.",
 			"Write standalone Markdown that makes sense without the surrounding conversation.",
 			"Prefer the distilled explanation over copying your chat response verbatim.",
-			"Do not save conversational filler, subagent process commentary, or tool-call details.",
-			"Do not duplicate quiz content; quiz questions and results are logged automatically.",
-			"When a quiz follows an explanation, finish lesson_write before invoking the quiz. Avoid issuing lesson_write and quiz as intentionally parallel work.",
+			"Do not save conversational filler, subagent process commentary, tool-call details, or quiz content.",
 			"If the current concept changes, call lesson_note first.",
 		],
 		parameters: LessonWriteParams,
@@ -349,12 +499,7 @@ export default function lessonLog(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			if (!lessonFile) {
 				return {
-					content: [
-						{
-							type: "text",
-							text: "No active lesson note. Call lesson_note for the current concept first.",
-						},
-					],
+					content: [{ type: "text", text: "No active topic note. Call lesson_note for the current concept first." }],
 					details: { status: "no-lesson" },
 				};
 			}
@@ -369,23 +514,17 @@ export default function lessonLog(pi: ExtensionAPI) {
 
 			const target = lessonFile;
 			await withLock(() => appendToFile(target, content));
-
 			return {
 				content: [{ type: "text", text: `Saved durable lesson material to ${target}` }],
-				details: {
-					status: "written",
-					file: target,
-					topic: lessonSlug,
-				},
+				details: { status: "written", file: target, topic: lessonSlug },
 			};
 		},
 	});
 
-	// Capture the true post-shuffle quiz question, but do NOT write it yet.
-	// Waiting until tool_result prevents the question from racing ahead of a
-	// lesson_write call that belongs before it.
+	// Capture the post-shuffle question but wait for the result before writing.
+	// This keeps each question/result pair together and preserves chronology.
 	pi.on("tool_execution_update", async (event, _ctx) => {
-		if (!lessonFile) return;
+		if (!quizFile || !quizSlug || !quizPhase) return;
 		if ((event as any).toolName !== "quiz") return;
 
 		const toolCallId = String((event as any).toolCallId || "");
@@ -401,13 +540,13 @@ export default function lessonLog(pi: ExtensionAPI) {
 		const context = input.details?.trim() || undefined;
 
 		pendingQuizzes.set(toolCallId, {
-			file: lessonFile,
+			file: quizFile,
+			slug: quizSlug,
+			phase: quizPhase,
 			questionBlock: buildQuizQuestionBlock(question, context, options),
 		});
 	});
 
-	// Write the question + result as one ordered unit only after the learner has
-	// answered. By then, a preceding lesson_write has had time to complete.
 	pi.on("tool_result", async (event, _ctx) => {
 		if ((event as any).toolName !== "quiz") return;
 
@@ -415,8 +554,10 @@ export default function lessonLog(pi: ExtensionAPI) {
 		const details: any = (event as any).details || {};
 		const pending = toolCallId ? pendingQuizzes.get(toolCallId) : undefined;
 
-		const target = pending?.file ?? lessonFile;
-		if (!target) return;
+		const targetFile = pending?.file ?? quizFile;
+		const targetSlug = pending?.slug ?? quizSlug;
+		const targetPhase = pending?.phase ?? quizPhase;
+		if (!targetFile || !targetSlug || !targetPhase) return;
 
 		let questionBlock = pending?.questionBlock;
 		if (!questionBlock) {
@@ -431,7 +572,7 @@ export default function lessonLog(pi: ExtensionAPI) {
 		}
 
 		const resultBlock = buildQuizResultBlock(details);
-		await withLock(() => appendToFile(target, `${questionBlock}\n\n${resultBlock}`));
+		await withLock(() => appendQuizUnit(targetFile, targetSlug, targetPhase, questionBlock, resultBlock));
 
 		if (toolCallId) pendingQuizzes.delete(toolCallId);
 	});
