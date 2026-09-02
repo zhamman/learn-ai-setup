@@ -15,7 +15,7 @@ Do not mirror ordinary user chatter, orchestration, researcher chatter, or tool 
 
 ## At the start of a learning session
 
-If no learning directory is set, ask the learner which subject directory to use, then instruct them to run:
+The learner controls the subject directory. If none has been configured, ask them to run:
 
 ```text
 /learn <subject-directory>
@@ -29,35 +29,40 @@ Examples:
 /learn databases/postgres
 ```
 
-Do not invent a broad folder hierarchy when the learner has already chosen one.
+Do not silently invent or change the learner's subject directory.
 
-## When to start a new lesson note
+## Automatic topic switching
 
-Before teaching a distinct concept/node in the lesson dependency graph, switch to a topic note with:
+Once `/learn` is configured, YOU switch notes automatically with the `lesson_note` tool.
+
+Before the first substantive explanation of a distinct concept/node, call:
 
 ```text
-/lesson <short-topic-slug>
+lesson_note({ topic: "<stable-concept-slug>" })
 ```
 
 Examples:
 
 ```text
-/lesson classes
-/lesson self
-/lesson inheritance
-/lesson composition
+lesson_note({ topic: "classes" })
+lesson_note({ topic: "self" })
+lesson_note({ topic: "inheritance" })
+lesson_note({ topic: "composition" })
 ```
 
-A new note is appropriate when the learner has moved to a concept that could stand alone as a useful future reference.
+The learner should not need to run `/lesson` during a normal teaching session. `/lesson` exists only as a manual escape hatch.
 
-Do NOT create a new note merely because:
+A new note is appropriate when the lesson dependency graph moves to a concept that could stand alone as a useful future reference.
+
+Do NOT switch notes merely because:
 - the learner asked a clarification about the current concept
 - a quiz occurred
 - a researcher was consulted
 - the teaching style changed
+- an additional example is being given
 - the same concept is being revisited
 
-If the concept is revisited later, use the same slug so the same Markdown note is enriched rather than creating `topic-2.md`.
+If the concept is revisited later, reuse the exact same slug so the same Markdown note is enriched rather than creating `topic-2.md`, `topic-part-2.md`, or a date-based duplicate.
 
 ## What belongs in the note
 
@@ -68,7 +73,7 @@ The active note should receive:
 - quiz questions
 - quiz answers and explanations
 
-The active note should NOT become a transcript. Avoid writing conversational filler such as:
+The active note should NOT become a transcript. Avoid conversational filler such as:
 - "Great question"
 - "Let's continue"
 - process commentary about subagents/tools
@@ -82,11 +87,12 @@ When using the `teach` skill:
 
 1. Probe and plan normally.
 2. Present the dependency map before teaching.
-3. After the learner approves the plan, identify the first concept/node.
-4. Switch to that concept's `/lesson` note before teaching it.
-5. Teach and quiz the concept.
-6. When moving to the next distinct concept, switch `/lesson` first.
-7. Keep clarifications and retries in the current concept note.
-8. At the end, leave the last lesson active unless the learner asks to stop logging.
+3. Wait for the learner to approve the plan.
+4. Identify the first concept/node.
+5. Call `lesson_note` for that concept BEFORE teaching it.
+6. Teach and quiz the concept.
+7. When the graph moves to the next distinct concept, call `lesson_note` first.
+8. Keep clarifications, retries, and quizzes in the current concept note.
+9. At the end, leave the last lesson active unless the learner asks to stop logging.
 
-The topic boundary should follow the knowledge graph, not arbitrary chat turns.
+The topic boundary follows the knowledge graph, not arbitrary chat turns.
