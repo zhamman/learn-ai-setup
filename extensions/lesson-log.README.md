@@ -1,77 +1,128 @@
 # lesson-log
 
-This extension keeps clean, topic-based learning notes for Obsidian without mirroring the Pi chat.
+This extension keeps clean topic notes and quiz history separate for Obsidian.
 
-## Normal workflow
+## Subject layout
+
+After:
+
+```text
+/learn ai-engineering
+```
+
+Pi uses:
+
+```text
+ai-engineering/
+├── topic/
+└── quiz/
+```
+
+Example:
+
+```text
+ai-engineering/
+├── topic/
+│   ├── context-window.md
+│   ├── tool-calling.md
+│   └── agent-harness.md
+└── quiz/
+    ├── context-engineering-diagnostic.md
+    ├── context-window-lesson.md
+    ├── tool-calling-lesson.md
+    └── agent-harness-lesson.md
+```
+
+`topic/` contains durable knowledge only. `quiz/` contains diagnostic and lesson quiz history only.
+
+## Normal teaching flow
 
 1. Start Pi from the learning workspace root.
-2. Set the subject directory once:
-
-```text
-/learn python/oop
-```
-
+2. Set the subject directory once with `/learn <subject>`.
 3. Start the `lesson-notes` and `teach` skills.
-4. As teaching moves through distinct concepts, Pi calls `lesson_note` automatically.
-5. Pi saves only durable knowledge by explicitly calling `lesson_write`.
-6. Quiz questions/results are logged automatically.
-
-For example, one OOP lesson can produce:
-
-```text
-python/oop/
-├── classes.md
-├── self.md
-├── inheritance.md
-└── composition.md
-```
-
-The same topic slug is reused when a concept is revisited, so the same note is enriched rather than creating transcript-style duplicates.
-
-## What gets logged
-
-The active topic note receives only:
-
-- curated lesson material explicitly saved with `lesson_write`
-- quiz questions
-- quiz answers
-- quiz explanations
-
-It intentionally omits:
-
-- ordinary user chat
-- ordinary assistant chat
-- bash/read/write/edit tool chatter
-- researcher/subagent tool results
-- orchestration noise
-
-## Commands
-
-- `/learn <dir>` — set/change the subject directory relative to the Pi working directory.
-- `/lesson <slug>` — manually start/switch a lesson note; normally unnecessary because Pi uses `lesson_note` automatically.
-- `/lesson-stop` — stop topic-note logging.
-- `/lesson-status` — show the current subject and active note.
+4. Before the opening knowledge check, Pi calls `lesson_quiz_context` with `phase: "diagnostic"`.
+5. Diagnostic questions/results are captured in `quiz/<overall-topic>-diagnostic.md`.
+6. Before teaching a concept, Pi calls `lesson_note`.
+7. `lesson_note` activates `topic/<concept>.md` and automatically routes subsequent quizzes to `quiz/<concept>-lesson.md`.
+8. Pi saves durable explanations with `lesson_write`.
+9. Quiz questions/results are captured automatically in the separate quiz file.
 
 ## Model tools
+
+### `lesson_quiz_context`
+
+Use this before the opening pre-instruction assessment:
+
+```text
+lesson_quiz_context({
+  topic: "context-engineering",
+  phase: "diagnostic"
+})
+```
+
+The diagnostic is stored in:
+
+```text
+quiz/context-engineering-diagnostic.md
+```
+
+Ordinary quizzes during teaching do not normally need this tool.
 
 ### `lesson_note`
 
 ```text
-lesson_note({ topic: "inheritance" })
+lesson_note({ topic: "context-window" })
 ```
 
-Creates or activates `python/oop/inheritance.md` when `/learn python/oop` is active.
+This activates:
+
+```text
+topic/context-window.md
+```
+
+and automatically sets the lesson quiz target to:
+
+```text
+quiz/context-window-lesson.md
+```
 
 ### `lesson_write`
 
 ```text
 lesson_write({
-  content: "Inheritance lets a class derive behavior from a parent class..."
+  content: "A context window is the model's current working input..."
 })
 ```
 
-Appends only that curated Markdown to the active topic note.
+Only that curated Markdown is appended to the active topic note.
 
-Ordinary assistant responses are not automatically written. This lets Pi be conversational in the terminal while Obsidian remains a durable knowledge base rather than a filtered transcript.
+Ordinary assistant messages are not automatically written.
 
-Quiz content does not need to be sent through `lesson_write`; the extension captures quiz questions and results automatically while a lesson note is active.
+## Quiz files
+
+Each completed quiz question is appended with its result in chronological order:
+
+```text
+# Context Window — Lesson Quiz
+
+## Quiz 1
+<question>
+<result>
+
+## Quiz 2
+<question>
+<result>
+```
+
+Diagnostic files include a note that they were taken before instruction.
+
+## Commands
+
+- `/learn <dir>` — set/change the subject directory and create `topic/` + `quiz/`.
+- `/lesson <slug>` — manually start/switch a concept note; normal teaching uses `lesson_note` automatically.
+- `/lesson-stop` — stop topic-note writing and quiz capture.
+- `/lesson-status` — show the current subject, topic note, and quiz target.
+
+## What is intentionally omitted
+
+Neither topic nor quiz files should contain ordinary chat, bash/read/write/edit chatter, researcher/subagent output, or orchestration noise.
