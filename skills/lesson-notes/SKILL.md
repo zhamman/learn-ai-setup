@@ -11,7 +11,14 @@ Use the `lesson-log` extension to keep durable learning notes organized by conce
 
 Pi chat is the working conversation. Obsidian notes are the clean knowledge artifact.
 
-Do not mirror ordinary user chatter, orchestration, researcher chatter, or tool noise into the notes. The extension already filters those. Your job is to switch the active note at the right semantic boundary.
+Ordinary chat is NOT copied into Obsidian. You must deliberately save durable teaching material with `lesson_write`.
+
+Your responsibilities are:
+
+1. switch to the correct concept note with `lesson_note`
+2. teach conversationally in chat
+3. deliberately write the clean, standalone version of durable knowledge with `lesson_write`
+4. let quiz logging happen automatically
 
 ## At the start of a learning session
 
@@ -33,7 +40,7 @@ Do not silently invent or change the learner's subject directory.
 
 ## Automatic topic switching
 
-Once `/learn` is configured, YOU switch notes automatically with the `lesson_note` tool.
+Once `/learn` is configured, YOU switch notes automatically with `lesson_note`.
 
 Before the first substantive explanation of a distinct concept/node, call:
 
@@ -64,22 +71,62 @@ Do NOT switch notes merely because:
 
 If the concept is revisited later, reuse the exact same slug so the same Markdown note is enriched rather than creating `topic-2.md`, `topic-part-2.md`, or a date-based duplicate.
 
+## Explicit durable writing
+
+After teaching something worth preserving, call:
+
+```text
+lesson_write({
+  content: "<clean standalone Markdown>"
+})
+```
+
+The content passed to `lesson_write` should be the durable version of the lesson, not a transcript of what you just said.
+
+Good `lesson_write` content includes:
+- the core explanation of the concept
+- a useful mental model
+- an important distinction
+- a concise code example
+- a Mermaid diagram block
+- a short worked example that will still be useful later
+
+Do NOT write:
+- greetings or praise
+- "Great question"
+- "Let's continue"
+- statements about what you are about to teach
+- researcher/subagent process commentary
+- tool-call descriptions
+- repeated conversational clarification that adds no durable knowledge
+- quiz questions/results, because the extension logs those automatically
+
+Not every assistant response requires `lesson_write`.
+
+A useful pattern is:
+
+```text
+chat explanation
+↓
+learner clarification
+↓
+refined understanding
+↓
+lesson_write(clean distilled version)
+↓
+quiz
+```
+
+This lets the conversation be exploratory while the Obsidian note remains concise.
+
 ## What belongs in the note
 
-The active note should receive:
-- lesson prose that teaches the concept
-- concise examples that are part of the lesson
-- useful Mermaid or visual embeds
+The active note should receive only:
+- deliberately curated lesson material written through `lesson_write`
 - quiz questions
 - quiz answers and explanations
 
-The active note should NOT become a transcript. Avoid conversational filler such as:
-- "Great question"
-- "Let's continue"
-- process commentary about subagents/tools
-- explanations of what you are about to do rather than the lesson itself
-
-Write lesson prose so it reads well later without the chat around it.
+Write lesson material so it makes sense later without the surrounding chat.
 
 ## Teaching integration
 
@@ -90,9 +137,11 @@ When using the `teach` skill:
 3. Wait for the learner to approve the plan.
 4. Identify the first concept/node.
 5. Call `lesson_note` for that concept BEFORE teaching it.
-6. Teach and quiz the concept.
-7. When the graph moves to the next distinct concept, call `lesson_note` first.
-8. Keep clarifications, retries, and quizzes in the current concept note.
-9. At the end, leave the last lesson active unless the learner asks to stop logging.
+6. Teach conversationally.
+7. Once the explanation has stabilized, call `lesson_write` with the clean durable version.
+8. Quiz the concept; quiz Q&A is logged automatically.
+9. If clarification materially improves the durable explanation, call `lesson_write` again with only the new useful material.
+10. When the graph moves to the next distinct concept, call `lesson_note` first.
+11. At the end, leave the last lesson active unless the learner asks to stop logging.
 
 The topic boundary follows the knowledge graph, not arbitrary chat turns.
