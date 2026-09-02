@@ -1,7 +1,7 @@
 {
   "id": "pi-learning",
   "name": "Pi Learning",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "minAppVersion": "1.5.0",
   "description": "Clean lesson, plan, quiz, and coding UI for the Pi learning workflow.",
   "author": "Zach Hamman",
