@@ -1,70 +1,231 @@
+/* Pi Learning — quiet, document-first UI. */
+
+.pi-learning-topic-view .inline-title,
+.pi-learning-plan-view .inline-title,
+.pi-learning-quiz-view .inline-title {
+  display: none !important;
+}
+
+.pi-learning-topic-view .markdown-reading-view .markdown-preview-sizer,
+.pi-learning-plan-view .markdown-reading-view .markdown-preview-sizer {
+  max-width: 780px;
+  padding-top: 3.5rem;
+  padding-bottom: 5rem;
+}
+
+.pi-learning-quiz-view .markdown-reading-view .markdown-preview-sizer {
+  max-width: 900px;
+  padding-top: clamp(2rem, 6vh, 5rem);
+  padding-bottom: 5rem;
+}
+
+/* Quiz files are application surfaces, not ordinary documents. */
+.pi-learning-quiz-view .markdown-reading-view h1 {
+  display: none;
+}
+
+.pi-learning-topic-view .markdown-reading-view h1,
+.pi-learning-plan-view .markdown-reading-view h1 {
+  margin: 0 0 0.65rem;
+  font-size: clamp(2rem, 4vw, 2.45rem);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+  font-weight: 700;
+}
+
+.pi-learning-topic-view .markdown-reading-view h2,
+.pi-learning-plan-view .markdown-reading-view h2 {
+  margin: 2.65rem 0 0.7rem;
+  font-size: 1.35rem;
+  line-height: 1.25;
+  letter-spacing: -0.022em;
+  font-weight: 650;
+}
+
+.pi-learning-topic-view .markdown-reading-view p,
+.pi-learning-plan-view .markdown-reading-view p {
+  margin: 0 0 1rem;
+  line-height: 1.72;
+}
+
+.pi-learning-topic-view .markdown-reading-view pre,
+.pi-learning-plan-view .markdown-reading-view pre {
+  margin: 1.35rem 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 13px;
+  box-shadow: none;
+}
+
+.pi-learning-plan-view .markdown-reading-view ol,
+.pi-learning-plan-view .markdown-reading-view ul {
+  padding-left: 1.3rem;
+}
+
+.pi-learning-plan-view .markdown-reading-view li {
+  margin: 0.65rem 0;
+  padding-left: 0.18rem;
+}
+
+/* Assessment card */
 .pi-learning-assessment {
-  max-width: 760px;
-  margin: 2rem auto;
-  padding: 0;
-  color: var(--text-normal);
+  --pi-card: #ffffff;
+  --pi-card-border: #e7e7e3;
+  --pi-card-muted: #737373;
+  --pi-option: #ffffff;
+  --pi-option-hover: #fafaf8;
+  --pi-option-border: #e2e2de;
+  --pi-option-selected: #171717;
+  --pi-button-bg: #171717;
+  --pi-button-text: #ffffff;
+  --pi-code-bg: #171717;
+  --pi-code-text: #f4f4f4;
+
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: clamp(2rem, 5vw, 3.5rem) clamp(1.5rem, 6vw, 4rem) clamp(2.25rem, 6vw, 4rem);
+  border: 1px solid var(--pi-card-border);
+  border-radius: 18px;
+  background: var(--pi-card);
+  color: #171717;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.055);
+}
+
+.theme-dark .pi-learning-assessment {
+  --pi-card: #232323;
+  --pi-card-border: #343434;
+  --pi-card-muted: #9a9a9a;
+  --pi-option: #232323;
+  --pi-option-hover: #292929;
+  --pi-option-border: #3c3c3c;
+  --pi-option-selected: #ededed;
+  --pi-button-bg: #ededed;
+  --pi-button-text: #171717;
+  --pi-code-bg: #171717;
+  --pi-code-text: #f1f1f1;
+
+  color: #ededed;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+}
+
+.pi-learning-assessment-header {
+  margin-bottom: 0.75rem;
 }
 
 .pi-learning-kicker {
-  margin-bottom: 0.5rem;
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  font-weight: 500;
-  letter-spacing: 0.02em;
+  color: var(--pi-card-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
 }
 
 .pi-learning-question {
-  margin: 0 0 1.4rem !important;
-  font-size: 1.45rem !important;
-  line-height: 1.35 !important;
-  letter-spacing: -0.02em;
+  margin: 0 0 2rem;
+  font-size: clamp(1.45rem, 2.6vw, 1.75rem);
+  line-height: 1.34;
+  letter-spacing: -0.028em;
+  font-weight: 650;
+}
+
+.pi-learning-question > :first-child,
+.pi-learning-option-text > :first-child,
+.pi-learning-result-copy > :first-child {
+  margin-top: 0;
+}
+
+.pi-learning-question > :last-child,
+.pi-learning-option-text > :last-child,
+.pi-learning-result-copy > :last-child {
+  margin-bottom: 0;
+}
+
+.pi-learning-question p {
+  margin: 0 0 1rem;
+}
+
+.pi-learning-question code:not(pre code),
+.pi-learning-option-text code:not(pre code) {
+  padding: 0.12em 0.34em;
+  border-radius: 5px;
+  background: rgba(127, 127, 127, 0.12);
+  color: inherit;
+  font-size: 0.88em;
+}
+
+.pi-learning-question pre {
+  margin: 1.25rem 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid #333333;
+  border-radius: 13px;
+  background: var(--pi-code-bg) !important;
+  color: var(--pi-code-text) !important;
+  box-shadow: none;
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.pi-learning-question pre code {
+  color: inherit !important;
 }
 
 .pi-learning-options {
   display: grid;
-  gap: 0.65rem;
+  gap: 0.7rem;
 }
 
 .pi-learning-option {
-  display: flex;
+  appearance: none;
+  display: grid;
+  grid-template-columns: 1.4rem 1fr;
   width: 100%;
-  align-items: flex-start;
-  gap: 0.8rem;
-  padding: 0.95rem 1rem;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
-  background: var(--background-primary);
-  color: var(--text-normal);
-  box-shadow: none;
+  align-items: start;
+  gap: 0.75rem;
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--pi-option-border) !important;
+  border-radius: 13px;
+  background: var(--pi-option) !important;
+  color: inherit !important;
+  box-shadow: none !important;
   text-align: left;
-  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 130ms ease, background-color 130ms ease, transform 130ms ease, box-shadow 130ms ease;
 }
 
 .pi-learning-option:hover:not(:disabled) {
-  border-color: var(--text-faint);
-  background: var(--background-primary-alt);
+  border-color: color-mix(in srgb, var(--pi-option-selected) 35%, var(--pi-option-border)) !important;
+  background: var(--pi-option-hover) !important;
+  transform: translateY(-1px);
 }
 
 .pi-learning-option.is-selected {
-  border-color: var(--text-normal);
-  box-shadow: inset 0 0 0 1px var(--text-normal);
+  border-color: var(--pi-option-selected) !important;
+  background: var(--pi-option-hover) !important;
+  box-shadow: inset 0 0 0 1px var(--pi-option-selected) !important;
 }
 
 .pi-learning-option:disabled {
   cursor: default;
-  opacity: 0.78;
 }
 
 .pi-learning-option-index {
-  flex: 0 0 1.15rem;
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  line-height: 1.5rem;
+  padding-top: 0.07rem;
+  color: var(--pi-card-muted);
+  font-size: 0.76rem;
+  line-height: 1.55;
+  font-weight: 600;
 }
 
 .pi-learning-option-text {
-  flex: 1;
-  line-height: 1.5;
+  min-width: 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.pi-learning-option-text p {
+  margin: 0;
 }
 
 .pi-learning-submit-row {
@@ -72,39 +233,43 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin-top: 1.25rem;
+  margin-top: 1.55rem;
 }
 
 .pi-learning-helper {
-  color: var(--text-muted);
-  font-size: 0.82rem;
+  color: var(--pi-card-muted);
+  font-size: 0.8rem;
 }
 
 .pi-learning-submit {
-  min-width: 116px;
-  padding: 0.68rem 1rem;
-  border: 1px solid var(--text-normal);
+  appearance: none;
+  min-width: 126px;
+  padding: 0.72rem 1.08rem;
+  border: 1px solid var(--pi-button-bg) !important;
   border-radius: 10px;
-  background: var(--text-normal);
-  color: var(--background-primary);
-  font-weight: 600;
-  box-shadow: none;
+  background: var(--pi-button-bg) !important;
+  color: var(--pi-button-text) !important;
+  box-shadow: none !important;
+  font-size: 0.85rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: opacity 120ms ease, transform 120ms ease;
 }
 
 .pi-learning-submit:hover:not(:disabled) {
-  filter: brightness(0.9);
+  transform: translateY(-1px);
 }
 
 .pi-learning-submit:disabled {
   cursor: default;
-  opacity: 0.4;
+  opacity: 0.34;
 }
 
 .pi-learning-result {
   display: none;
-  margin-top: 1.35rem;
-  padding-top: 1.1rem;
-  border-top: 1px solid var(--background-modifier-border);
+  margin-top: 1.6rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--pi-card-border);
 }
 
 .pi-learning-result.is-visible {
@@ -112,128 +277,124 @@
 }
 
 .pi-learning-result-title {
-  margin-bottom: 0.28rem;
+  margin-bottom: 0.35rem;
   font-weight: 650;
 }
 
 .pi-learning-result-copy {
-  color: var(--text-muted);
-  line-height: 1.55;
+  color: var(--pi-card-muted);
+  font-size: 0.9rem;
+  line-height: 1.62;
+}
+
+.pi-learning-result-copy p {
+  margin: 0 0 0.7rem;
+}
+
+.pi-learning-section-label,
+.pi-learning-test-label {
+  margin-bottom: 0.55rem;
+  color: var(--pi-card-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.pi-learning-criteria-wrap {
+  margin: 0 0 1.35rem;
+}
+
+.pi-learning-criteria {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pi-learning-criteria li {
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--pi-card-border);
+  color: var(--pi-card-muted);
+  font-size: 0.88rem;
+}
+
+.pi-learning-code-wrap {
+  overflow: hidden;
+  margin-top: 1.3rem;
+  border: 1px solid #333333;
+  border-radius: 13px;
+  background: var(--pi-code-bg);
+}
+
+.pi-learning-code-label {
+  display: flex;
+  align-items: center;
+  min-height: 2.1rem;
+  padding: 0 0.95rem;
+  border-bottom: 1px solid #303030;
+  color: #8f8f8f;
+  font-family: var(--font-monospace);
+  font-size: 0.72rem;
+  text-transform: lowercase;
+}
+
+.pi-learning-code-editor {
+  display: block;
+  width: 100%;
+  min-height: 280px;
+  resize: vertical;
+  padding: 1rem 1.05rem 1.2rem;
+  border: 0 !important;
+  border-radius: 0;
+  outline: 0 !important;
+  background: var(--pi-code-bg) !important;
+  color: var(--pi-code-text) !important;
+  box-shadow: none !important;
+  font-family: var(--font-monospace);
+  font-size: 0.84rem;
+  line-height: 1.62;
+  tab-size: 4;
+}
+
+.pi-learning-code-editor:focus {
+  box-shadow: inset 0 0 0 1px #4b4b4b !important;
 }
 
 .pi-learning-test-evidence {
   margin-top: 1rem;
 }
 
-.pi-learning-test-label {
-  margin-bottom: 0.4rem;
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 .pi-learning-test-evidence pre {
   margin: 0;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
-  background: var(--background-primary-alt);
-}
-
-.pi-learning-criteria {
-  margin: 0 0 1.15rem;
-  padding: 0;
-  list-style: none;
-}
-
-.pi-learning-criteria li {
-  padding: 0.48rem 0;
-  border-bottom: 1px solid var(--background-modifier-border);
-  color: var(--text-muted);
-}
-
-.pi-learning-code-wrap {
-  margin-top: 1rem;
-}
-
-.pi-learning-code-editor {
-  width: 100%;
-  min-height: 260px;
-  resize: vertical;
-  padding: 1rem;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
-  outline: none;
-  background: var(--code-background);
-  color: var(--code-normal);
-  font-family: var(--font-monospace);
-  font-size: 0.86rem;
-  line-height: 1.55;
-  tab-size: 4;
-}
-
-.pi-learning-code-editor:focus {
-  border-color: var(--text-muted);
-  box-shadow: inset 0 0 0 1px var(--text-muted);
-}
-
-.pi-learning-code-editor:disabled {
-  opacity: 0.75;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--pi-card-border);
+  border-radius: 11px;
+  background: var(--pi-code-bg) !important;
+  color: var(--pi-code-text) !important;
+  box-shadow: none;
 }
 
 .pi-learning-error {
+  max-width: 780px;
+  margin: 2rem auto;
   padding: 1rem;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
+  border-radius: 12px;
   color: var(--text-muted);
 }
 
-/* Clean, cohesive reading width for learning documents. */
-.pi-learning-topic-view .markdown-reading-view .markdown-preview-sizer,
-.pi-learning-plan-view .markdown-reading-view .markdown-preview-sizer,
-.pi-learning-quiz-view .markdown-reading-view .markdown-preview-sizer {
-  max-width: 800px;
-}
-
-.pi-learning-topic-view .markdown-reading-view h1,
-.pi-learning-plan-view .markdown-reading-view h1 {
-  margin-bottom: 0.45rem;
-  font-size: 2.2rem;
-  line-height: 1.12;
-  letter-spacing: -0.035em;
-}
-
-.pi-learning-topic-view .markdown-reading-view h2,
-.pi-learning-plan-view .markdown-reading-view h2 {
-  margin-top: 2.2rem;
-  margin-bottom: 0.65rem;
-  font-size: 1.35rem;
-  letter-spacing: -0.02em;
-}
-
-.pi-learning-topic-view .markdown-reading-view p,
-.pi-learning-plan-view .markdown-reading-view p {
-  line-height: 1.65;
-}
-
-.pi-learning-plan-view .markdown-reading-view ol {
-  padding-left: 1.45rem;
-}
-
-.pi-learning-plan-view .markdown-reading-view li {
-  margin: 0.7rem 0;
-  padding-left: 0.2rem;
-}
-
-.pi-learning-quiz-view .markdown-reading-view h1 {
-  margin-bottom: 2rem;
-  font-size: 1.75rem;
-  letter-spacing: -0.025em;
-}
-
 @media (max-width: 700px) {
+  .pi-learning-topic-view .markdown-reading-view .markdown-preview-sizer,
+  .pi-learning-plan-view .markdown-reading-view .markdown-preview-sizer,
+  .pi-learning-quiz-view .markdown-reading-view .markdown-preview-sizer {
+    padding-top: 1.5rem;
+  }
+
+  .pi-learning-assessment {
+    padding: 1.65rem 1.15rem 1.9rem;
+    border-radius: 15px;
+  }
+
   .pi-learning-submit-row {
     align-items: stretch;
     flex-direction: column;
@@ -241,9 +402,5 @@
 
   .pi-learning-submit {
     width: 100%;
-  }
-
-  .pi-learning-question {
-    font-size: 1.25rem !important;
   }
 }
