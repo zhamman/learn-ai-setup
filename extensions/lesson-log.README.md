@@ -1,8 +1,8 @@
 # lesson-log
 
-This extension keeps a current learning plan, clean topic notes, and quiz history separate for Obsidian.
+`lesson-log` turns a Pi teaching session into a structured Obsidian learning system rather than a transcript.
 
-## Subject layout
+## Layout
 
 After:
 
@@ -10,7 +10,7 @@ After:
 /learn ai-engineering
 ```
 
-Pi uses:
+Pi maintains:
 
 ```text
 ai-engineering/
@@ -24,140 +24,136 @@ Example:
 ```text
 ai-engineering/
 ├── plan/
-│   └── context-engineering.md
+│   └── agent-orchestration.md
 ├── topic/
-│   ├── context-window.md
-│   ├── tool-calling.md
-│   └── agent-harness.md
+│   ├── agent-loop.md
+│   └── supervisor-pattern.md
 └── quiz/
-    ├── context-engineering-diagnostic.md
-    ├── context-window-lesson.md
-    ├── tool-calling-lesson.md
-    └── agent-harness-lesson.md
+    ├── agent-orchestration-diagnostic.md
+    ├── agent-loop-lesson.md
+    └── supervisor-pattern-lesson.md
 ```
 
-`plan/` contains the current roadmap for an overall learning track.
-`topic/` contains durable knowledge only.
-`quiz/` contains diagnostic and lesson quiz history only.
+## What changed
 
-## Normal teaching flow
+The extension now supports seven higher-level learning features:
 
-1. Start Pi from the learning workspace root.
-2. Set the subject directory once with `/learn <subject>`.
-3. Start the `lesson-notes` and `teach` skills.
-4. Before the opening knowledge check, Pi calls `lesson_quiz_context` with `phase: "diagnostic"`.
-5. Diagnostic questions/results are captured in `quiz/<overall-topic>-diagnostic.md`.
-6. Pi builds the dependency map and calls `lesson_plan` to create `plan/<overall-topic>.md`.
-7. Before teaching a concept, Pi calls `lesson_note`.
-8. `lesson_note` activates `topic/<concept>.md` and automatically routes subsequent quizzes to `quiz/<concept>-lesson.md`.
-9. Pi saves durable explanations with `lesson_write`.
-10. Quiz questions/results are captured automatically in the separate quiz file.
-11. As meaningful progress changes, Pi rewrites the plan with the latest complete roadmap.
+1. standardized YAML frontmatter and fixed note sections
+2. an explicit start → diagnostic → plan → teach → quiz → finish lifecycle
+3. durable misconception tracking with resolved/unresolved state
+4. quiz-driven mastery gating and adaptive-plan behavior
+5. concept prerequisites, related links, and backlinks
+6. a mechanical note-quality audit before completion
+7. section-aware topic updates instead of blind append-only prose
 
-## Model tools
+## Standard topic note
 
-### `lesson_quiz_context`
+New topic notes use standardized metadata and headings:
 
-Use this before the opening pre-instruction assessment:
+```markdown
+---
+type: "topic"
+subject: "ai-engineering"
+topic: "supervisor-pattern"
+status: "learning"
+confidence: 1
+updated: "2026-09-02"
+prerequisites:
+  - "agent-loop"
+related:
+  - "handoffs"
+quiz_correct: 0
+quiz_total: 0
+quiz_score: 0
+last_quiz_correct: false
+---
+
+# Supervisor Pattern
+
+## Core Idea
+## Why It Exists
+## Mental Model
+## How It Works
+## Example
+## Common Mistakes
+## Misconceptions
+## Related Concepts
+## Notes
+```
+
+Existing legacy topic/plan/quiz files are preserved and normalized when the extension next touches them; the extension does not intentionally discard their existing Markdown bodies.
+
+## Main tools
+
+### `lesson_start`
+
+Starts one overall learning track and routes the initial probe to its diagnostic quiz file:
 
 ```text
-lesson_quiz_context({
-  topic: "context-engineering",
-  phase: "diagnostic"
-})
+lesson_start({ topic: "agent-orchestration" })
 ```
-
-The diagnostic is stored in:
-
-```text
-quiz/context-engineering-diagnostic.md
-```
-
-Ordinary quizzes during teaching do not normally need this tool.
 
 ### `lesson_plan`
 
-Use this after the diagnostic and dependency planning:
-
-```text
-lesson_plan({
-  topic: "context-engineering",
-  content: "## Goal\n...\n\n## Starting Point\n...\n\n## Learning Sequence\n- [ ] Context windows\n..."
-})
-```
-
-This writes:
-
-```text
-plan/context-engineering.md
-```
-
-The file is replaced with the latest complete plan each time `lesson_plan` is called. This keeps the roadmap current instead of appending stale versions.
-
-A useful plan includes:
-
-```text
-Goal
-Starting Point
-Dependency Map
-Learning Sequence
-Current Position
-Next
-```
+Writes the fixed plan sections in place. The diagnostic should determine Starting Point and initial sequence; later quiz evidence can change the graph.
 
 ### `lesson_note`
 
-```text
-lesson_note({ topic: "context-window" })
-```
-
-This activates:
+Activates a concept and its relationships:
 
 ```text
-topic/context-window.md
-```
-
-and automatically sets the lesson quiz target to:
-
-```text
-quiz/context-window-lesson.md
-```
-
-### `lesson_write`
-
-```text
-lesson_write({
-  content: "A context window is the model's current working input..."
+lesson_note({
+  topic: "supervisor-pattern",
+  prerequisites: ["agent-loop"],
+  related: ["handoffs"]
 })
 ```
 
-Only that curated Markdown is appended to the active topic note. Ordinary assistant messages are not automatically written.
+It also routes subsequent quizzes to `quiz/supervisor-pattern-lesson.md` and adds explicit relationships/backlinks when target notes exist.
 
-## Quiz files
+### `lesson_write`
 
-Each completed quiz question is appended with its result in chronological order:
+Updates one stable topic section:
 
 ```text
-# Context Window — Lesson Quiz
-
-## Quiz 1
-<question>
-<result>
-
-## Quiz 2
-<question>
-<result>
+lesson_write({
+  section: "mental-model",
+  content: "Think of the supervisor as the routing/control layer...",
+  mode: "replace"
+})
 ```
 
-Diagnostic files include a note that they were taken before instruction.
+`replace` is the default. `append` is reserved for genuinely additive examples/notes.
+
+### `lesson_misconception`
+
+Records an unresolved misconception as a checkbox item; calling it later with the same wording and `resolved: true` marks it resolved. During diagnostics, `topic` can explicitly target the concept even though no lesson note is active yet.
+
+### `lesson_quality`
+
+Performs a mechanical audit of the active topic note: required sections, thin content, unresolved misconceptions, standardized metadata, and quiz evidence. Semantic accuracy and redundancy still require model review.
+
+### `lesson_progress`
+
+Tracks concept state (`learning`, `blocked`, `complete`). Completion is blocked if required note quality is not met, unresolved misconceptions remain, there is no lesson quiz evidence, or the latest lesson quiz was not correct.
+
+### `lesson_finish`
+
+Marks the overall plan complete. By default it refuses while unchecked Learning Sequence items remain.
+
+## Quiz behavior
+
+Questions are buffered until the quiz result arrives, then the question/result pair is appended as one chronological unit. Diagnostic and lesson quizzes stay in separate files.
+
+Lesson quiz results also update the active topic's cumulative quiz statistics and confidence metadata. A miss returns the topic to `learning`; it cannot be marked complete until remediation and a subsequent correct quiz.
 
 ## Commands
 
-- `/learn <dir>` — set/change the subject directory and create `plan/` + `topic/` + `quiz/`.
-- `/lesson <slug>` — manually start/switch a concept note; normal teaching uses `lesson_note` automatically.
-- `/lesson-stop` — stop topic-note writing and quiz capture.
-- `/lesson-status` — show the current subject, plan, topic note, and quiz target.
+- `/learn <dir>` — set/change the subject and ensure `plan/`, `topic/`, `quiz/` exist.
+- `/lesson <slug>` — manual concept activation escape hatch; normal teaching uses `lesson_note`.
+- `/lesson-stop` — stop active note/quiz capture without completing the overall track.
+- `/lesson-status` — show subject, lifecycle phase, current track, plan, topic note, and quiz target.
 
-## What is intentionally omitted
+## Intentionally omitted
 
-Plan, topic, and quiz files should not contain ordinary chat, bash/read/write/edit chatter, researcher/subagent output, or orchestration noise.
+Ordinary user chat, ordinary assistant chat, tool chatter, researcher/subagent process output, and orchestration noise are not copied into the learning artifacts.
