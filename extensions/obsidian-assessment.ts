@@ -1,12 +1,9 @@
 /**
- * obsidian-assessment — Obsidian-first lesson delivery and assessment submission.
+ * obsidian-assessment — bridge Pi learning tools to the Pi Learning Obsidian plugin.
  *
- * During an active lesson-log track:
- *   - durable lesson content must be written before lesson-phase assessment
- *   - built-in terminal quiz is replaced by lesson_obsidian_quiz
- *   - multiple-choice answers can be submitted by checking boxes in Obsidian
- *   - coding submissions can be edited and submitted from Obsidian
- *   - file submissions trigger a Pi turn automatically
+ * Visible quiz files contain only render blocks (`learning-quiz` / `learning-code`).
+ * Correct answers, submissions, results, and mastery statistics live under
+ * <subject>/.learning/ and are not shown as document metadata.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -15,12 +12,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 type QuizPhase = "diagnostic" | "lesson";
-type MetaValue = string | number | boolean | string[];
 
-type LessonLogState = {
+type LessonLogSession = {
 	subjectDir?: string | null;
-	sessionSlug?: string | null;
-	lifecyclePhase?: string | null;
+	trackSlug?: string | null;
+	trackTitle?: string | null;
+	lifecycle?: string | null;
 	lessonFile?: string | null;
 	lessonSlug?: string | null;
 	quizFile?: string | null;
@@ -28,642 +25,473 @@ type LessonLogState = {
 	quizPhase?: QuizPhase | null;
 };
 
-type PendingObsidianQuiz = {
-	assessmentId: string;
-	file: string;
+type HiddenState = {
+	version?: number;
+	subject?: string;
+	track?: { lifecycle?: string; [key: string]: any };
+	plan?: any;
+	topics?: Record<string, any>;
+	[key: string]: any;
+};
+
+type QuizAssessment = {
+	id: string;
+	type: "quiz";
 	subjectDir: string;
-	slug: string;
+	topic: string;
 	phase: QuizPhase;
-	number: number;
+	file: string;
+	label: string;
 	question: string;
 	options: string[];
 	correctIndex: number;
 	explanation: string;
+	status: "pending" | "completed";
 };
 
-type PendingCodeSubmission = {
-	exerciseId: string;
-	file: string;
+type CodeAssessment = {
+	id: string;
+	type: "code";
 	subjectDir: string;
-	slug: string;
+	topic: string;
 	phase: QuizPhase;
+	file: string;
+	label: string;
 	language: string;
-	criteria: string[];
 	prompt: string;
-	lastSubmission?: string;
-	awaitingGrade: boolean;
+	criteria: string[];
+	starterCode: string;
+	status: "pending" | "awaiting-grade" | "completed";
 };
 
-type CapturedCodeCall = {
-	prompt: string;
-	language?: string;
-	starterCode?: string;
-	criteria: string[];
-};
+type Assessment = QuizAssessment | CodeAssessment;
 
-const META_ORDER = [
-	"type",
-	"subject",
-	"topic",
-	"phase",
-	"status",
-	"confidence",
-	"updated",
-	"prerequisites",
-	"related",
-	"quiz_correct",
-	"quiz_total",
-	"quiz_score",
-	"last_quiz_correct",
-	"code_exercise_correct",
-	"code_exercise_total",
-	"last_code_exercise_correct",
-] as const;
-
-const ObsidianQuizParams = Type.Object({
-	question: Type.String({
-		description: "Self-contained objectively gradable question. Do not include the answer in the stem.",
-	}),
-	options: Type.Array(Type.String(), {
-		description: "Distinct plausible answer choices. Exactly one must be correct.",
-		minItems: 2,
-		maxItems: 6,
-	}),
-	correctIndex: Type.Integer({
-		description: "1-based index of the single correct option.",
-		minimum: 1,
-	}),
-	explanation: Type.String({
-		description: "Concise explanation shown only after submission, including why the correct answer is correct.",
-	}),
+const QuizParams = Type.Object({
+	question: Type.String({ description: "Self-contained conceptual question." }),
+	options: Type.Array(Type.String(), { minItems: 2, maxItems: 6, description: "Distinct answer options." }),
+	correctIndex: Type.Integer({ minimum: 1, description: "1-based index of the one correct option." }),
+	explanation: Type.String({ description: "Concise explanation shown after submission." }),
+	label: Type.Optional(Type.String({ description: "Short UI label such as 'Check 1'." })),
 });
 
-function todayLocal(): string {
-	const d = new Date();
-	const y = d.getFullYear();
-	const m = String(d.getMonth() + 1).padStart(2, "0");
-	const day = String(d.getDate()).padStart(2, "0");
-	return `${y}-${m}-${day}`;
-}
+const CodeParams = Type.Object({
+	prompt: Type.String({ description: "Self-contained implementation/debugging/querying task." }),
+	language: Type.Optional(Type.String({ description: "Language id such as python, typescript, sql, bash." })),
+	starterCode: Type.Optional(Type.String({ description: "Optional starter code without the solution." })),
+	criteria: Type.Array(Type.String(), { minItems: 1, description: "Objective grading criteria." }),
+	label: Type.Optional(Type.String({ description: "Short UI label such as 'Coding exercise'." })),
+});
+
+const CodeResultParams = Type.Object({
+	exerciseId: Type.String({ description: "Assessment id returned by lesson_code_exercise." }),
+	submission: Type.String({ description: "Exact learner submission that was evaluated." }),
+	correct: Type.Boolean({ description: "True only if all acceptance criteria are satisfied." }),
+	feedback: Type.String({ description: "Concise evidence-based feedback." }),
+	testEvidence: Type.Optional(Type.String({ description: "Only actual compiler/test/runtime evidence, if executed." })),
+});
 
 function slugify(input: string): string {
-	return input
-		.trim()
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
+	return input.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function yamlScalar(value: string | number | boolean): string {
-	if (typeof value === "number" || typeof value === "boolean") return String(value);
-	return JSON.stringify(value);
+function ensureDir(dir: string): void {
+	fs.mkdirSync(dir, { recursive: true });
 }
 
-function parseScalar(raw: string): string | number | boolean {
-	const value = raw.trim();
-	if (/^-?\d+(?:\.\d+)?$/.test(value)) return Number(value);
-	if (value === "true") return true;
-	if (value === "false") return false;
-	if (value.startsWith('"') && value.endsWith('"')) {
-		try {
-			return JSON.parse(value);
-		} catch {
-			return value.slice(1, -1);
-		}
+function learningDir(subjectDir: string): string {
+	return path.join(subjectDir, ".learning");
+}
+
+function assessmentDir(subjectDir: string): string {
+	return path.join(learningDir(subjectDir), "assessments");
+}
+
+function submissionDir(subjectDir: string): string {
+	return path.join(learningDir(subjectDir), "submissions");
+}
+
+function resultDir(subjectDir: string): string {
+	return path.join(learningDir(subjectDir), "results");
+}
+
+function stateFile(subjectDir: string): string {
+	return path.join(learningDir(subjectDir), "state.json");
+}
+
+function ensureLearningDirs(subjectDir: string): void {
+	for (const dir of [learningDir(subjectDir), assessmentDir(subjectDir), submissionDir(subjectDir), resultDir(subjectDir)]) ensureDir(dir);
+}
+
+function readJson<T>(file: string): T | null {
+	try {
+		if (!fs.existsSync(file)) return null;
+		return JSON.parse(fs.readFileSync(file, "utf-8")) as T;
+	} catch {
+		return null;
 	}
-	return value;
 }
 
-function splitFrontmatter(text: string): { meta: Record<string, MetaValue>; body: string } {
-	if (!text.startsWith("---\n")) return { meta: {}, body: text };
-	const end = text.indexOf("\n---\n", 4);
-	if (end < 0) return { meta: {}, body: text };
-	const block = text.slice(4, end);
-	const body = text.slice(end + 5);
-	const meta: Record<string, MetaValue> = {};
-	let listKey: string | null = null;
-
-	for (const line of block.split("\n")) {
-		const item = line.match(/^\s{2}-\s+(.*)$/);
-		if (item && listKey) {
-			const arr = Array.isArray(meta[listKey]) ? (meta[listKey] as string[]) : [];
-			arr.push(String(parseScalar(item[1])));
-			meta[listKey] = arr;
-			continue;
-		}
-		const kv = line.match(/^([A-Za-z0-9_-]+):(?:\s*(.*))?$/);
-		if (!kv) continue;
-		const key = kv[1];
-		const raw = kv[2] ?? "";
-		if (raw.trim() === "" || raw.trim() === "[]") {
-			meta[key] = [];
-			listKey = raw.trim() === "" ? key : null;
-		} else {
-			meta[key] = parseScalar(raw);
-			listKey = null;
-		}
-	}
-	return { meta, body };
+function writeJson(file: string, value: unknown): void {
+	ensureDir(path.dirname(file));
+	const temp = `${file}.tmp`;
+	fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+	fs.renameSync(temp, file);
 }
 
-function renderFrontmatter(meta: Record<string, MetaValue>): string {
-	const orderedKeys = [
-		...META_ORDER.filter((key) => Object.prototype.hasOwnProperty.call(meta, key)),
-		...Object.keys(meta).filter((key) => !META_ORDER.includes(key as any)).sort(),
-	];
-	const lines = ["---"];
-	for (const key of orderedKeys) {
-		const value = meta[key];
-		if (Array.isArray(value)) {
-			if (value.length === 0) lines.push(`${key}: []`);
-			else {
-				lines.push(`${key}:`);
-				for (const item of value) lines.push(`  - ${yamlScalar(item)}`);
-			}
-		} else {
-			lines.push(`${key}: ${yamlScalar(value)}`);
-		}
-	}
-	lines.push("---");
-	return lines.join("\n");
-}
-
-function readFileParts(file: string): { meta: Record<string, MetaValue>; body: string } {
-	if (!fs.existsSync(file)) return { meta: {}, body: "" };
-	return splitFrontmatter(fs.readFileSync(file, "utf-8"));
-}
-
-function writeFileParts(file: string, meta: Record<string, MetaValue>, body: string): void {
-	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, `${renderFrontmatter(meta)}\n\n${body.trim()}\n`, "utf-8");
-}
-
-function getLessonLogState(ctx: any): LessonLogState | null {
-	let last: LessonLogState | null = null;
+function getLessonLogState(ctx: any): LessonLogSession | null {
+	let last: LessonLogSession | null = null;
 	for (const entry of ctx.sessionManager.getEntries()) {
-		if (entry.type === "custom" && entry.customType === "lesson-log") last = entry.data as LessonLogState;
+		if (entry.type === "custom" && entry.customType === "lesson-log") last = entry.data as LessonLogSession;
 	}
 	return last;
 }
 
-function activeLearning(state: LessonLogState | null): state is LessonLogState {
-	if (!state?.subjectDir || !state.sessionSlug) return false;
-	return state.lifecyclePhase !== "idle" && state.lifecyclePhase !== "finished";
+function activeLearning(state: LessonLogSession | null): boolean {
+	return Boolean(state?.subjectDir && state?.trackSlug && state?.lifecycle !== "finished");
 }
 
-function getSection(body: string, heading: string): string {
-	const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	const match = new RegExp(`^## ${escaped}\\s*$`, "m").exec(body);
-	if (!match) return "";
-	const start = match.index + match[0].length;
-	const rest = body.slice(start);
-	const next = /^##\s+/m.exec(rest);
-	const end = next ? start + next.index : body.length;
-	return body.slice(start, end).trim();
-}
-
-function topicReadyForAssessment(state: LessonLogState): boolean {
-	const file = state.lessonFile;
+function noteReady(file: string | null | undefined): boolean {
 	if (!file || !fs.existsSync(file)) return false;
-	const { body } = readFileParts(file);
-	const core = getSection(body, "Core Idea").replace(/[_*`#>\-\[\]]/g, "").trim();
-	const support = ["Why It Exists", "Mental Model", "How It Works", "Example"]
-		.map((heading) => getSection(body, heading).replace(/[_*`#>\-\[\]]/g, "").trim())
-		.some((value) => value.length >= 20);
-	return core.length >= 20 && support;
+	const text = fs.readFileSync(file, "utf-8");
+	const headings = (text.match(/^##\s+.+$/gm) || []).length;
+	const words = text.replace(/^#+\s+.*$/gm, " ").replace(/```[\s\S]*?```/g, " code ").trim().split(/\s+/).filter(Boolean).length;
+	return headings >= 2 && words >= 120;
 }
 
-function nextQuizNumber(file: string): number {
-	if (!fs.existsSync(file)) return 1;
-	const { body } = readFileParts(file);
-	const matches = [...body.matchAll(/^## Quiz (\d+)\s*$/gm)];
+function appendRenderBlock(file: string, language: "learning-quiz" | "learning-code", payload: Record<string, unknown>): void {
+	ensureDir(path.dirname(file));
+	const current = fs.existsSync(file) ? fs.readFileSync(file, "utf-8").trimEnd() : "";
+	const block = `~~~${language}\n${JSON.stringify(payload)}\n~~~`;
+	const prefix = current ? `${current}\n\n` : "";
+	fs.writeFileSync(file, `${prefix}${block}\n`, "utf-8");
+}
+
+function assessmentPath(subjectDir: string, id: string): string {
+	return path.join(assessmentDir(subjectDir), `${id}.json`);
+}
+
+function resultPath(subjectDir: string, id: string): string {
+	return path.join(resultDir(subjectDir), `${id}.json`);
+}
+
+function nextAssessmentId(subjectDir: string, topic: string, kind: "quiz" | "code"): string {
+	ensureLearningDirs(subjectDir);
+	const prefix = `${slugify(topic)}-${kind}-`;
 	let max = 0;
-	for (const match of matches) max = Math.max(max, Number(match[1]) || 0);
-	return max + 1;
-}
-
-function fence(language: string, code: string): string {
-	const safeLanguage = language.replace(/[^A-Za-z0-9_+#.-]/g, "");
-	const runs = code.match(/`+/g) ?? [];
-	let longest = 0;
-	for (const run of runs) longest = Math.max(longest, run.length);
-	const ticks = "`".repeat(Math.max(3, longest + 1));
-	return `${ticks}${safeLanguage}\n${code}\n${ticks}`;
-}
-
-function confidenceFromAssessment(correct: number, total: number): number {
-	if (total >= 5 && correct / total >= 0.9) return 5;
-	if (total >= 3 && correct / total >= 0.8) return 4;
-	if (total >= 2 && correct / total >= 0.6) return 3;
-	if (correct >= 1) return 2;
-	return 1;
-}
-
-function updateQuizStats(file: string, correctResult: boolean): void {
-	if (!fs.existsSync(file)) return;
-	const { meta, body } = readFileParts(file);
-	const total = Number(meta.quiz_total || 0) + 1;
-	const correct = Number(meta.quiz_correct || 0) + (correctResult ? 1 : 0);
-	writeFileParts(file, {
-		...meta,
-		updated: todayLocal(),
-		quiz_total: total,
-		quiz_correct: correct,
-		quiz_score: Math.round((correct / total) * 100),
-	}, body);
-}
-
-function updateTopicStats(subjectDir: string, slug: string, correctResult: boolean): void {
-	const file = path.join(subjectDir, "topic", `${slug}.md`);
-	if (!fs.existsSync(file)) return;
-	const { meta, body } = readFileParts(file);
-	const total = Number(meta.quiz_total || 0) + 1;
-	const correct = Number(meta.quiz_correct || 0) + (correctResult ? 1 : 0);
-	const confidenceBase = confidenceFromAssessment(correct, total);
-	const confidence = correctResult ? confidenceBase : Math.min(confidenceBase, 2);
-	writeFileParts(file, {
-		...meta,
-		updated: todayLocal(),
-		quiz_total: total,
-		quiz_correct: correct,
-		quiz_score: Math.round((correct / total) * 100),
-		last_quiz_correct: correctResult,
-		confidence,
-		status: correctResult ? ((meta.status as string) || "learning") : "learning",
-	}, body);
-}
-
-function setTopicLastAssessment(subjectDir: string, slug: string, correctResult: boolean): void {
-	const file = path.join(subjectDir, "topic", `${slug}.md`);
-	if (!fs.existsSync(file)) return;
-	const { meta, body } = readFileParts(file);
-	writeFileParts(file, { ...meta, updated: todayLocal(), last_quiz_correct: correctResult }, body);
-}
-
-function appendToBody(file: string, addition: string): void {
-	const { meta, body } = readFileParts(file);
-	writeFileParts(file, { ...meta, updated: todayLocal() }, `${body.trim()}\n\n${addition.trim()}`);
-}
-
-function sectionForMarker(text: string, marker: string, explicitEnd?: string): { start: number; end: number; text: string } | null {
-	const start = text.indexOf(marker);
-	if (start < 0) return null;
-	let end: number;
-	if (explicitEnd) {
-		const endIndex = text.indexOf(explicitEnd, start + marker.length);
-		end = endIndex >= 0 ? endIndex + explicitEnd.length : text.length;
-	} else {
-		const rest = text.slice(start + marker.length);
-		const next = /^##\s+/m.exec(rest);
-		end = next ? start + marker.length + next.index : text.length;
+	for (const name of fs.readdirSync(assessmentDir(subjectDir))) {
+		const match = name.match(new RegExp(`^${prefix}(\\d+)\\.json$`));
+		if (match) max = Math.max(max, Number(match[1]));
 	}
-	return { start, end, text: text.slice(start, end) };
+	return `${prefix}${max + 1}`;
+}
+
+function defaultStats(): any {
+	return { correct: 0, total: 0, lastCorrect: null, codeCorrect: 0, codeTotal: 0, lastCodeCorrect: null };
+}
+
+function updateMastery(subjectDir: string, topicSlug: string, correct: boolean, code: boolean): void {
+	const file = stateFile(subjectDir);
+	const state = readJson<HiddenState>(file) || { version: 2, topics: {} };
+	state.topics = state.topics || {};
+	const topic = state.topics[topicSlug] || {
+		title: topicSlug,
+		file: path.join(subjectDir, "topic", `${topicSlug}.md`),
+		status: "learning",
+		requiresCode: false,
+		prerequisites: [],
+		related: [],
+		assessments: defaultStats(),
+		misconceptions: [],
+	};
+	const stats = { ...defaultStats(), ...(topic.assessments || {}) };
+	stats.total += 1;
+	if (correct) stats.correct += 1;
+	stats.lastCorrect = correct;
+	if (code) {
+		stats.codeTotal += 1;
+		if (correct) stats.codeCorrect += 1;
+		stats.lastCodeCorrect = correct;
+	}
+	topic.assessments = stats;
+	if (!correct) topic.status = "learning";
+	state.topics[topicSlug] = topic;
+	writeJson(file, state);
+}
+
+function setAssessmentLifecycle(subjectDir: string): void {
+	const file = stateFile(subjectDir);
+	const state = readJson<HiddenState>(file);
+	if (!state?.track) return;
+	state.track.lifecycle = "assessment";
+	writeJson(file, state);
 }
 
 export default function obsidianAssessment(pi: ExtensionAPI) {
-	const pendingQuizzes = new Map<string, PendingObsidianQuiz>();
-	const pendingCode = new Map<string, PendingCodeSubmission>();
-	const capturedCodeCalls = new Map<string, CapturedCodeCall>();
-	const watchedFiles = new Set<string>();
-	let writeLock: Promise<void> = Promise.resolve();
-
-	function withLock<T>(fn: () => T | Promise<T>): Promise<T> {
-		const previous = writeLock;
-		let release!: () => void;
-		writeLock = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		return previous.then(fn).finally(() => release());
-	}
-
-	function persistQuiz(quiz: PendingObsidianQuiz, completed: boolean): void {
-		pi.appendEntry("obsidian-quiz-assessment", { ...quiz, completed });
-	}
-
-	function persistCode(code: PendingCodeSubmission, completed: boolean): void {
-		pi.appendEntry("obsidian-code-submit", { ...code, completed });
-	}
+	const subjects = new Set<string>();
+	let pollTimer: NodeJS.Timeout | null = null;
+	let processing = false;
 
 	function sendAssessmentEvent(content: string, details: Record<string, unknown>): void {
 		pi.sendMessage(
-			{
-				customType: "obsidian-assessment-submission",
-				content,
-				display: false,
-				details,
-			},
+			{ customType: "obsidian-learning-submission", content, display: false, details },
 			{ triggerTurn: true, deliverAs: "followUp" },
 		);
 	}
 
-	async function gradeCheckedQuiz(quiz: PendingObsidianQuiz, selectedIndex: number): Promise<void> {
-		if (!pendingQuizzes.has(quiz.assessmentId)) return;
-		const correct = selectedIndex === quiz.correctIndex;
-		await withLock(() => {
-			const fileText = fs.readFileSync(quiz.file, "utf-8");
-			const marker = `<!-- obsidian-quiz-id:${quiz.assessmentId} -->`;
-			const section = sectionForMarker(fileText, marker);
-			if (!section) return;
-			const selected = quiz.options[selectedIndex - 1] || "(unknown)";
-			const correctLabel = quiz.options[quiz.correctIndex - 1] || "(unknown)";
-			const result = [
-				"",
-				`> [!${correct ? "success" : "failure"}] Result — ${correct ? "correct ✓" : "incorrect ✗"}`,
-				`> Your answer: ${selectedIndex}. ${selected}`,
-				`> Correct answer: ${quiz.correctIndex}. ${correctLabel}`,
-				">",
-				...quiz.explanation.split("\n").map((line) => (line ? `> ${line}` : ">")),
-			].join("\n");
-			const nextText = `${fileText.slice(0, section.end).trimEnd()}${result}\n${fileText.slice(section.end).replace(/^\s*/, "")}`;
-			fs.writeFileSync(quiz.file, nextText, "utf-8");
-			updateQuizStats(quiz.file, correct);
-			if (quiz.phase === "lesson") updateTopicStats(quiz.subjectDir, quiz.slug, correct);
-		});
+	function registerSubject(subjectDir: string | null | undefined): void {
+		if (!subjectDir) return;
+		ensureLearningDirs(subjectDir);
+		subjects.add(subjectDir);
+	}
 
-		pendingQuizzes.delete(quiz.assessmentId);
-		persistQuiz(quiz, true);
+	async function processQuizSubmission(subjectDir: string, submission: any): Promise<void> {
+		const id = String(submission.assessmentId || "");
+		const assessment = readJson<QuizAssessment>(assessmentPath(subjectDir, id));
+		if (!assessment || assessment.type !== "quiz" || assessment.status === "completed") return;
+		const selectedIndex = Number(submission.selectedIndex);
+		if (!Number.isInteger(selectedIndex) || selectedIndex < 1 || selectedIndex > assessment.options.length) return;
+		const correct = selectedIndex === assessment.correctIndex;
+		assessment.status = "completed";
+		writeJson(assessmentPath(subjectDir, id), assessment);
+		writeJson(resultPath(subjectDir, id), {
+			assessmentId: id,
+			type: "quiz",
+			correct,
+			selectedIndex,
+			correctIndex: assessment.correctIndex,
+			feedback: assessment.explanation,
+			completedAt: new Date().toISOString(),
+		});
+		if (assessment.phase === "lesson") updateMastery(subjectDir, assessment.topic, correct, false);
 		sendAssessmentEvent(
 			[
-				`The learner submitted an Obsidian multiple-choice assessment for ${quiz.slug}.`,
+				`The learner submitted the Obsidian conceptual assessment for ${assessment.topic}.`,
 				`Result: ${correct ? "correct" : "incorrect"}.`,
-				`Selected: ${selectedIndex}. ${quiz.options[selectedIndex - 1] || ""}`,
-				`Correct: ${quiz.correctIndex}. ${quiz.options[quiz.correctIndex - 1] || ""}`,
-				`Explanation: ${quiz.explanation}`,
+				`Selected: ${selectedIndex}. ${assessment.options[selectedIndex - 1]}`,
+				`Correct: ${assessment.correctIndex}. ${assessment.options[assessment.correctIndex - 1]}`,
+				`Explanation: ${assessment.explanation}`,
 				correct
-					? "Treat this as the node's quiz-check evidence and continue the learning lifecycle."
-					: "Treat this as a quiz miss: diagnose the gap, reteach or inspect prerequisites, record a real misconception only if evidence supports one, then reassess before advancing.",
+					? "Treat this as valid quiz-check evidence and continue the learning lifecycle."
+					: "Treat this as a miss: diagnose the gap, reteach or inspect prerequisites, record a misconception only if evidence supports one, and reassess before advancing.",
 			].join("\n"),
-			{ assessmentId: quiz.assessmentId, topic: quiz.slug, phase: quiz.phase, correct, selectedIndex },
+			{ assessmentId: id, topic: assessment.topic, phase: assessment.phase, correct, selectedIndex },
 		);
 	}
 
-	async function submitCodeFromFile(code: PendingCodeSubmission, submission: string): Promise<void> {
-		if (code.awaitingGrade || submission === code.lastSubmission) return;
-		code.awaitingGrade = true;
-		code.lastSubmission = submission;
-		persistCode(code, false);
+	async function processCodeSubmission(subjectDir: string, submission: any): Promise<void> {
+		const id = String(submission.assessmentId || "");
+		const assessment = readJson<CodeAssessment>(assessmentPath(subjectDir, id));
+		if (!assessment || assessment.type !== "code" || assessment.status === "completed") return;
+		const code = String(submission.code || "");
+		if (!code.trim()) return;
+		assessment.status = "awaiting-grade";
+		writeJson(assessmentPath(subjectDir, id), assessment);
 		sendAssessmentEvent(
 			[
-				`The learner submitted coding exercise ${code.exerciseId} from Obsidian.`,
-				`Topic: ${code.slug}`,
-				`Language: ${code.language}`,
-				`Exercise: ${code.prompt}`,
+				`The learner submitted coding exercise ${id} from Obsidian.`,
+				`Topic: ${assessment.topic}`,
+				`Language: ${assessment.language}`,
+				`Task: ${assessment.prompt}`,
 				"Acceptance criteria:",
-				...code.criteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+				...assessment.criteria.map((criterion, index) => `${index + 1}. ${criterion}`),
 				"Exact submission:",
-				fence(code.language, submission),
-				"Evaluate every criterion. When feasible and safe, run/compile/test the code. Then call lesson_code_result with this exact submission, the verified pass/fail result, concise feedback, and actual test evidence if executed.",
+				`~~~${assessment.language}`,
+				code,
+				"~~~",
+				"Evaluate every criterion. When feasible and safe, actually run/compile/test it. Then call lesson_code_result with this exact submission and verified result.",
 			].join("\n"),
-			{ exerciseId: code.exerciseId, topic: code.slug, phase: code.phase, submission },
+			{ assessmentId: id, exerciseId: id, topic: assessment.topic, phase: assessment.phase, submission: code },
 		);
 	}
 
-	async function scanFile(file: string): Promise<void> {
-		if (!fs.existsSync(file)) return;
-		let text = fs.readFileSync(file, "utf-8");
-
-		for (const quiz of [...pendingQuizzes.values()].filter((item) => item.file === file)) {
-			const marker = `<!-- obsidian-quiz-id:${quiz.assessmentId} -->`;
-			const section = sectionForMarker(text, marker);
-			if (!section) continue;
-			const submitChecked = /^- \[[xX]\]\s+Submit answer\s*$/m.test(section.text);
-			const checked = [...section.text.matchAll(/^- \[[xX]\]\s+(\d+)\./gm)].map((match) => Number(match[1]));
-			if (submitChecked && checked.length === 1) {
-				await gradeCheckedQuiz(quiz, checked[0]);
-				if (fs.existsSync(file)) text = fs.readFileSync(file, "utf-8");
+	async function scanSubmissions(): Promise<void> {
+		if (processing) return;
+		processing = true;
+		try {
+			for (const subjectDir of subjects) {
+				const dir = submissionDir(subjectDir);
+				if (!fs.existsSync(dir)) continue;
+				for (const name of fs.readdirSync(dir).filter((value) => value.endsWith(".json")).sort()) {
+					const file = path.join(dir, name);
+					const submission = readJson<any>(file);
+					if (!submission) continue;
+					try {
+						if (submission.type === "quiz") await processQuizSubmission(subjectDir, submission);
+						else if (submission.type === "code") await processCodeSubmission(subjectDir, submission);
+						fs.unlinkSync(file);
+					} catch {
+						// Leave the file in place so a transient failure can retry.
+					}
+				}
 			}
+		} finally {
+			processing = false;
 		}
-
-		for (const code of [...pendingCode.values()].filter((item) => item.file === file)) {
-			if (code.awaitingGrade) continue;
-			const marker = `<!-- obsidian-code-id:${code.exerciseId} -->`;
-			const endMarker = `<!-- /obsidian-code:${code.exerciseId} -->`;
-			const section = sectionForMarker(text, marker, endMarker);
-			if (!section || !/^- \[[xX]\]\s+Submit\s*$/m.test(section.text)) continue;
-			const fenceMatch = /^(`{3,})[^\n]*\n([\s\S]*?)\n\1/m.exec(section.text);
-			const submission = fenceMatch?.[2]?.trim() || "";
-			if (!submission) continue;
-
-			await withLock(() => {
-				const latest = fs.readFileSync(file, "utf-8");
-				const latestSection = sectionForMarker(latest, marker, endMarker);
-				if (!latestSection) return;
-				const reset = latestSection.text.replace(/^- \[[xX]\]\s+Submit\s*$/m, "- [ ] Submit");
-				fs.writeFileSync(file, `${latest.slice(0, latestSection.start)}${reset}${latest.slice(latestSection.end)}`, "utf-8");
-			});
-			await submitCodeFromFile(code, submission);
-			if (fs.existsSync(file)) text = fs.readFileSync(file, "utf-8");
-		}
-	}
-
-	function watchFile(file: string): void {
-		if (!file || watchedFiles.has(file)) return;
-		watchedFiles.add(file);
-		fs.watchFile(file, { interval: 500 }, () => {
-			void scanFile(file);
-		});
-		setTimeout(() => void scanFile(file), 50);
 	}
 
 	pi.on("session_start", async (_event, ctx: any) => {
-		for (const entry of ctx.sessionManager.getEntries()) {
-			if (entry.type !== "custom") continue;
-			if (entry.customType === "obsidian-quiz-assessment") {
-				const data = entry.data as PendingObsidianQuiz & { completed?: boolean };
-				if (!data?.assessmentId) continue;
-				if (data.completed) pendingQuizzes.delete(data.assessmentId);
-				else pendingQuizzes.set(data.assessmentId, data);
-			}
-			if (entry.customType === "obsidian-code-submit") {
-				const data = entry.data as PendingCodeSubmission & { completed?: boolean };
-				if (!data?.exerciseId) continue;
-				if (data.completed) pendingCode.delete(data.exerciseId);
-				else pendingCode.set(data.exerciseId, data);
-			}
-		}
-		for (const file of new Set([
-			...[...pendingQuizzes.values()].map((item) => item.file),
-			...[...pendingCode.values()].map((item) => item.file),
-		])) watchFile(file);
+		registerSubject(getLessonLogState(ctx)?.subjectDir);
+		if (!pollTimer) pollTimer = setInterval(() => { void scanSubmissions(); }, 500);
 	});
 
 	pi.on("session_shutdown", async () => {
-		for (const file of watchedFiles) fs.unwatchFile(file);
-		watchedFiles.clear();
+		if (pollTimer) clearInterval(pollTimer);
+		pollTimer = null;
+		subjects.clear();
 	});
 
 	pi.on("before_agent_start", async (event, ctx: any) => {
 		const state = getLessonLogState(ctx);
+		registerSubject(state?.subjectDir);
 		if (!activeLearning(state)) return;
 		return {
 			systemPrompt:
 				event.systemPrompt +
-				"\n\nOBSIDIAN-FIRST LEARNING MODE:\n" +
-				"- Obsidian is the learner-facing lesson and assessment interface; keep terminal prose brief and navigational.\n" +
-				"- For each concept, call lesson_note and write the durable node with lesson_write BEFORE creating any lesson-phase assessment. Do not make the learner read the substantive lesson only in the terminal.\n" +
-				"- After the node is written, create either lesson_obsidian_quiz or lesson_code_exercise as appropriate. Do not use the built-in terminal quiz while this learning track is active.\n" +
-				"- Do not ask the learner to type quiz answers or code back into the terminal. They submit from Obsidian; file submission triggers the next Pi turn automatically.\n" +
-				"- A passed coding exercise or Obsidian quiz counts as the teach skill's quiz-check. Use both only when they test different necessary dimensions.",
+				"\n\nOBSIDIAN LEARNING UI:\n" +
+				"- Obsidian is the learner-facing lesson, plan, quiz, and coding interface. Keep terminal prose brief and navigational.\n" +
+				"- For every lesson-phase concept, call lesson_note and write the substantive lesson with lesson_write BEFORE creating an assessment. The learner should read the lesson in Obsidian, not depend on terminal prose.\n" +
+				"- Use lesson_obsidian_quiz for conceptual checks and lesson_code_exercise when implementation/debugging/querying code is necessary. Do not use the built-in terminal quiz during an active learning track.\n" +
+				"- After creating an assessment, stop and wait. The Obsidian plugin submits it through .learning/submissions and automatically triggers the next Pi turn.\n" +
+				"- A passed Obsidian quiz or coding exercise counts as the teach skill's quiz-check. Use both only when they test genuinely different required abilities.\n" +
+				"- Machine state, scores, dates, misconceptions, and completion flags stay hidden under .learning; do not write them into visible notes.",
 		};
 	});
 
 	pi.on("tool_call", async (event: any, ctx: any) => {
 		const state = getLessonLogState(ctx);
+		registerSubject(state?.subjectDir);
 		if (event.toolName === "quiz" && activeLearning(state)) {
+			return { block: true, reason: "Obsidian learning UI is active. Use lesson_obsidian_quiz or lesson_code_exercise instead of the terminal quiz." };
+		}
+		if (["lesson_obsidian_quiz", "lesson_code_exercise"].includes(event.toolName) && state?.quizPhase === "lesson" && !noteReady(state.lessonFile)) {
 			return {
 				block: true,
-				reason:
-					"Obsidian-first learning is active. Use lesson_obsidian_quiz for conceptual assessment or lesson_code_exercise for implementation assessment so the learner can submit from Obsidian.",
+				reason: "Write the substantive lesson node to Obsidian first. The active topic note needs at least two useful sections and enough explanatory content before its assessment is created.",
 			};
-		}
-
-		if (event.toolName === "lesson_code_exercise") {
-			if (activeLearning(state) && state.quizPhase === "lesson" && !topicReadyForAssessment(state)) {
-				return {
-					block: true,
-					reason:
-						"Write the current node to Obsidian first with lesson_write (Core Idea plus substantive explanation/mental model/how-it-works/example) before creating its coding assessment.",
-				};
-			}
-			const input = event.input || {};
-			capturedCodeCalls.set(String(event.toolCallId || ""), {
-				prompt: String(input.prompt || ""),
-				language: input.language ? String(input.language) : undefined,
-				starterCode: input.starterCode ? String(input.starterCode) : undefined,
-				criteria: Array.isArray(input.criteria) ? input.criteria.map(String) : [],
-			});
-		}
-	});
-
-	pi.on("tool_result", async (event: any, ctx: any) => {
-		if (event.toolName === "lesson_code_exercise") {
-			const details = event.details || {};
-			if (details.status !== "awaiting-submission" || !details.exerciseId || !details.file) return;
-			const callId = String(event.toolCallId || "");
-			const captured = capturedCodeCalls.get(callId) || { prompt: "", criteria: [] };
-			capturedCodeCalls.delete(callId);
-			const state = getLessonLogState(ctx);
-			const pending: PendingCodeSubmission = {
-				exerciseId: String(details.exerciseId),
-				file: String(details.file),
-				subjectDir: String(state?.subjectDir || path.dirname(path.dirname(String(details.file)))),
-				slug: slugify(String(details.topic || state?.quizSlug || state?.lessonSlug || "")),
-				phase: details.phase === "diagnostic" ? "diagnostic" : "lesson",
-				language: String(details.language || captured.language || "text"),
-				criteria: Array.isArray(details.criteria) ? details.criteria.map(String) : captured.criteria,
-				prompt: captured.prompt,
-				awaitingGrade: false,
-			};
-			pendingCode.set(pending.exerciseId, pending);
-			persistCode(pending, false);
-			const starter = captured.starterCode?.trim() || "";
-			appendToBody(
-				pending.file,
-				[
-					"### Your Submission",
-					`<!-- obsidian-code-id:${pending.exerciseId} -->`,
-					"Edit the fenced block below, then check **Submit**. Pi will detect the saved file automatically.",
-					"",
-					fence(pending.language, starter),
-					"",
-					"- [ ] Submit",
-					`<!-- /obsidian-code:${pending.exerciseId} -->`,
-				].join("\n"),
-			);
-			watchFile(pending.file);
-		}
-
-		if (event.toolName === "lesson_code_result") {
-			const details = event.details || {};
-			const exerciseId = String(details.exerciseId || "");
-			if (!exerciseId) return;
-			const pending = pendingCode.get(exerciseId);
-			if (!pending) return;
-			const correct = details.status === "correct";
-			if (pending.phase === "lesson") setTopicLastAssessment(pending.subjectDir, pending.slug, correct);
-			pending.awaitingGrade = false;
-			if (correct) pendingCode.delete(exerciseId);
-			else pendingCode.set(exerciseId, pending);
-			persistCode(pending, correct);
 		}
 	});
 
 	pi.registerTool({
 		name: "lesson_obsidian_quiz",
-		label: "Obsidian lesson quiz",
-		description:
-			"Write a single-answer conceptual quiz into the active diagnostic/lesson quiz file so the learner answers by clicking checkboxes in Obsidian. The file watcher grades the answer, records evidence, and triggers the next Pi turn automatically.",
-		promptSnippet:
-			"During an active lesson-log track, satisfy conceptual quiz-checks with lesson_obsidian_quiz instead of the terminal quiz. For lesson-phase checks, finish writing the current node to Obsidian first. The learner answers in Obsidian; do not restate the question in the terminal.",
-		promptGuidelines: [
-			"Use this for objectively gradable conceptual knowledge, reasoning, distinctions, or prediction.",
-			"Use lesson_code_exercise instead when full understanding requires writing/debugging/configuring/querying code.",
-			"For lesson-phase assessment, the durable node must already exist in Obsidian before this tool is called.",
-			"Exactly one option must be defensibly correct. Keep distractors plausible and parallel.",
-			"Do not reveal the correct answer in the question or options. The explanation is written only after submission.",
-			"After calling this tool, keep terminal output minimal; the learner will read and answer in Obsidian.",
-		],
-		parameters: ObsidianQuizParams,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx: any) {
-			const state = getLessonLogState(ctx);
-			if (!activeLearning(state) || !state.quizFile || !state.quizSlug || !state.quizPhase || !state.subjectDir) {
-				return {
-					content: [{ type: "text", text: "No active lesson assessment target. Start with lesson_start or activate a concept with lesson_note." }],
-					details: { status: "no-assessment" },
-				};
+		label: "Obsidian quiz",
+		description: "Create a sleek conceptual assessment rendered by the Pi Learning Obsidian plugin. Correct answers stay hidden under .learning; the learner selects one option and presses a real Submit answer button in Obsidian.",
+		promptSnippet: "Use for conceptual quiz-checks. During lesson phase, write the lesson note first, then create this assessment and wait for the Obsidian submission.",
+		parameters: QuizParams,
+		async execute(_id, params, _signal, _onUpdate, ctx: any) {
+			const session = getLessonLogState(ctx);
+			if (!session?.subjectDir || !session.quizFile || !session.quizSlug || !session.quizPhase) {
+				return { content: [{ type: "text", text: "No active learning assessment target." }], details: { status: "no-assessment" } };
 			}
-			if (state.quizPhase === "lesson" && !topicReadyForAssessment(state)) {
-				return {
-					content: [{ type: "text", text: "Current node is not written enough for assessment yet. Write Core Idea plus at least one substantive explanatory section with lesson_write first." }],
-					details: { status: "lesson-not-written" },
-				};
+			registerSubject(session.subjectDir);
+			if (params.correctIndex > params.options.length) {
+				return { content: [{ type: "text", text: "correctIndex is outside the options array." }], details: { status: "invalid-answer" } };
 			}
-			if (params.correctIndex < 1 || params.correctIndex > params.options.length) {
-				return {
-					content: [{ type: "text", text: "correctIndex must point to one of the supplied options." }],
-					details: { status: "invalid-answer" },
-				};
-			}
-
-			const file = state.quizFile;
-			const slug = slugify(state.quizSlug);
-			const number = nextQuizNumber(file);
-			const assessmentId = `${slug}-quiz-${number}`;
-			const quiz: PendingObsidianQuiz = {
-				assessmentId,
-				file,
-				subjectDir: state.subjectDir,
-				slug,
-				phase: state.quizPhase,
-				number,
+			const id = nextAssessmentId(session.subjectDir, session.quizSlug, "quiz");
+			const assessment: QuizAssessment = {
+				id,
+				type: "quiz",
+				subjectDir: session.subjectDir,
+				topic: session.quizSlug,
+				phase: session.quizPhase,
+				file: session.quizFile,
+				label: params.label?.trim() || (session.quizPhase === "diagnostic" ? "Diagnostic check" : "Check"),
 				question: params.question.trim(),
 				options: params.options.map((option: string) => option.trim()),
 				correctIndex: params.correctIndex,
 				explanation: params.explanation.trim(),
+				status: "pending",
 			};
-
-			const block = [
-				`## Quiz ${number}`,
-				`<!-- obsidian-quiz-id:${assessmentId} -->`,
-				"",
-				"> [!question] Question",
-				...quiz.question.split("\n").map((line) => (line ? `> ${line}` : ">")),
-				"",
-				"### Answer in Obsidian",
-				"Check exactly one answer, then check **Submit answer**. Obsidian saves the note and Pi detects it automatically.",
-				"",
-				...quiz.options.map((option, index) => `- [ ] ${index + 1}. ${option}`),
-				"",
-				"- [ ] Submit answer",
-			].join("\n");
-			appendToBody(file, block);
-			pendingQuizzes.set(assessmentId, quiz);
-			persistQuiz(quiz, false);
-			watchFile(file);
-
+			writeJson(assessmentPath(session.subjectDir, id), assessment);
+			appendRenderBlock(session.quizFile, "learning-quiz", {
+				id,
+				label: assessment.label,
+				topic: assessment.topic,
+				question: assessment.question,
+				options: assessment.options,
+			});
+			setAssessmentLifecycle(session.subjectDir);
 			return {
-				content: [{ type: "text", text: `Assessment written to Obsidian: ${file}. Do not restate the question in the terminal; wait for the file submission.` }],
-				details: { status: "awaiting-obsidian", assessmentId, file, topic: slug, phase: state.quizPhase },
+				content: [{ type: "text", text: `Obsidian assessment ready: ${session.quizFile}. Wait for the learner to submit it in Obsidian.` }],
+				details: { status: "awaiting-submission", assessmentId: id, file: session.quizFile, topic: assessment.topic, phase: assessment.phase },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "lesson_code_exercise",
+		label: "Obsidian coding exercise",
+		description: "Create a coding exercise rendered as an editable modern code surface in Obsidian. The learner presses Submit code; Pi receives the exact submission automatically for grading.",
+		promptSnippet: "Use when implementation ability is required for full understanding. Write the lesson note first, then create the exercise and wait for submission.",
+		parameters: CodeParams,
+		async execute(_id, params, _signal, _onUpdate, ctx: any) {
+			const session = getLessonLogState(ctx);
+			if (!session?.subjectDir || !session.quizFile || !session.quizSlug || !session.quizPhase) {
+				return { content: [{ type: "text", text: "No active learning assessment target." }], details: { status: "no-assessment" } };
+			}
+			registerSubject(session.subjectDir);
+			const id = nextAssessmentId(session.subjectDir, session.quizSlug, "code");
+			const assessment: CodeAssessment = {
+				id,
+				type: "code",
+				subjectDir: session.subjectDir,
+				topic: session.quizSlug,
+				phase: session.quizPhase,
+				file: session.quizFile,
+				label: params.label?.trim() || "Coding exercise",
+				language: params.language?.trim() || "text",
+				prompt: params.prompt.trim(),
+				criteria: params.criteria.map((criterion: string) => criterion.trim()).filter(Boolean),
+				starterCode: params.starterCode || "",
+				status: "pending",
+			};
+			writeJson(assessmentPath(session.subjectDir, id), assessment);
+			appendRenderBlock(session.quizFile, "learning-code", {
+				id,
+				label: assessment.label,
+				topic: assessment.topic,
+				language: assessment.language,
+				prompt: assessment.prompt,
+				criteria: assessment.criteria,
+				starterCode: assessment.starterCode,
+			});
+			setAssessmentLifecycle(session.subjectDir);
+			return {
+				content: [{ type: "text", text: `Coding exercise ready in Obsidian: ${session.quizFile}. Wait for the learner to submit code there.` }],
+				details: { status: "awaiting-submission", exerciseId: id, assessmentId: id, file: session.quizFile, topic: assessment.topic, phase: assessment.phase, language: assessment.language, criteria: assessment.criteria },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "lesson_code_result",
+		label: "coding result",
+		description: "Record the verified result for a coding submission received from the Obsidian plugin. Writes hidden result/mastery state; the plugin displays feedback automatically.",
+		promptSnippet: "After evaluating an Obsidian code submission, call this with the exact submission and verified result.",
+		parameters: CodeResultParams,
+		async execute(_id, params, _signal, _onUpdate, ctx: any) {
+			const session = getLessonLogState(ctx);
+			const subjectDir = session?.subjectDir;
+			if (!subjectDir) return { content: [{ type: "text", text: "No active learning subject." }], details: { status: "no-subject" } };
+			registerSubject(subjectDir);
+			const assessment = readJson<CodeAssessment>(assessmentPath(subjectDir, params.exerciseId));
+			if (!assessment || assessment.type !== "code") {
+				return { content: [{ type: "text", text: `Unknown coding exercise: ${params.exerciseId}` }], details: { status: "unknown-exercise" } };
+			}
+			assessment.status = "completed";
+			writeJson(assessmentPath(subjectDir, assessment.id), assessment);
+			writeJson(resultPath(subjectDir, assessment.id), {
+				assessmentId: assessment.id,
+				type: "code",
+				correct: params.correct,
+				feedback: params.feedback.trim(),
+				testEvidence: params.testEvidence?.trim() || null,
+				submission: params.submission,
+				completedAt: new Date().toISOString(),
+			});
+			if (assessment.phase === "lesson") updateMastery(subjectDir, assessment.topic, params.correct, true);
+			return {
+				content: [{ type: "text", text: params.correct ? `Coding exercise ${assessment.id} passed.` : `Coding exercise ${assessment.id} needs revision. The learner can submit a revised exercise after remediation.` }],
+				details: { status: params.correct ? "correct" : "incorrect", exerciseId: assessment.id, assessmentId: assessment.id, topic: assessment.topic },
 			};
 		},
 	});
