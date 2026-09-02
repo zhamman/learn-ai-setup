@@ -1,159 +1,109 @@
-# lesson-log
+# Clean Obsidian learning architecture
 
-`lesson-log` turns a Pi teaching session into a structured Obsidian learning system rather than a transcript.
+The learning system separates human-facing Markdown from machine-facing adaptive state.
 
-## Layout
-
-After:
+## Visible vault
 
 ```text
-/learn ai-engineering
-```
-
-Pi maintains:
-
-```text
-ai-engineering/
+<subject>/
 ├── plan/
+│   └── <track>.md
 ├── topic/
+│   └── <concept>.md
 └── quiz/
+    ├── <track>-diagnostic.md
+    └── <concept>-lesson.md
 ```
 
-Example:
+These files should read like a polished course. They do **not** contain visible status/date/confidence/quiz-score frontmatter.
+
+Topic notes create headings only when useful content exists. There is no prefilled empty template.
+
+Plans stay compact: title/deck, Goal, Starting point, Dependency map, and Path.
+
+Quiz files contain `learning-quiz` and `learning-code` render blocks. The Pi Learning Obsidian plugin turns those blocks into the interactive UI.
+
+## Hidden state
 
 ```text
-ai-engineering/
-├── plan/
-│   └── agent-orchestration.md
-├── topic/
-│   ├── agent-loop.md
-│   └── supervisor-pattern.md
-└── quiz/
-    ├── agent-orchestration-diagnostic.md
-    ├── agent-loop-lesson.md
-    └── supervisor-pattern-lesson.md
+<subject>/.learning/
+├── state.json
+├── assessments/
+├── submissions/
+└── results/
 ```
 
-## What changed
+This stores lifecycle state, graph relationships, misconceptions, assessment keys/results, mastery evidence, and coding requirements.
 
-The extension now supports seven higher-level learning features:
-
-1. standardized YAML frontmatter and fixed note sections
-2. an explicit start → diagnostic → plan → teach → quiz → finish lifecycle
-3. durable misconception tracking with resolved/unresolved state
-4. quiz-driven mastery gating and adaptive-plan behavior
-5. concept prerequisites, related links, and backlinks
-6. a mechanical note-quality audit before completion
-7. section-aware topic updates instead of blind append-only prose
-
-## Standard topic note
-
-New topic notes use standardized metadata and headings:
-
-```markdown
----
-type: "topic"
-subject: "ai-engineering"
-topic: "supervisor-pattern"
-status: "learning"
-confidence: 1
-updated: "2026-09-02"
-prerequisites:
-  - "agent-loop"
-related:
-  - "handoffs"
-quiz_correct: 0
-quiz_total: 0
-quiz_score: 0
-last_quiz_correct: false
----
-
-# Supervisor Pattern
-
-## Core Idea
-## Why It Exists
-## Mental Model
-## How It Works
-## Example
-## Common Mistakes
-## Misconceptions
-## Related Concepts
-## Notes
-```
-
-Existing legacy topic/plan/quiz files are preserved and normalized when the extension next touches them; the extension does not intentionally discard their existing Markdown bodies.
+The hidden state is deliberately separate from the notes the learner reads.
 
 ## Main tools
 
-### `lesson_start`
+`lesson_start`
+: Starts the overall track and routes the diagnostic assessment.
 
-Starts one overall learning track and routes the initial probe to its diagnostic quiz file:
+`lesson_plan`
+: Rewrites the current clean learning roadmap from structured adaptive steps.
+
+`lesson_note`
+: Activates/creates a clean concept note and records hidden graph state.
+
+`lesson_write`
+: Creates or replaces a useful human-readable section. Headings are freeform and are only created when content exists.
+
+`lesson_obsidian_quiz`
+: Creates a conceptual quiz rendered by the Obsidian plugin. Correct-answer data remains hidden.
+
+`lesson_code_exercise`
+: Creates an editable coding exercise rendered by the Obsidian plugin.
+
+`lesson_code_result`
+: Records Pi's verified grade/feedback for submitted code.
+
+`lesson_misconception`
+: Tracks a genuine misconception in hidden state.
+
+`lesson_quality`
+: Checks whether the visible lesson is substantive and whether hidden mastery requirements are satisfied.
+
+`lesson_progress`
+: Marks a concept learning/blocked/complete. Completion is gated on note quality and assessment evidence.
+
+`lesson_finish`
+: Finishes the track when its hidden path has no unfinished nodes.
+
+## Required order
+
+For lesson-phase concepts:
 
 ```text
-lesson_start({ topic: "agent-orchestration" })
+lesson_note
+  ↓
+lesson_write (actual lesson in Obsidian)
+  ↓
+learner reads topic note
+  ↓
+lesson_obsidian_quiz OR lesson_code_exercise
+  ↓
+learner submits in Obsidian
+  ↓
+Pi adapts / grades / reteaches
 ```
 
-### `lesson_plan`
+The assessment bridge blocks terminal `quiz` calls while the Obsidian learning workflow is active and blocks lesson-phase assessments until the topic note has substantive content.
 
-Writes the fixed plan sections in place. The diagnostic should determine Starting Point and initial sequence; later quiz evidence can change the graph.
+## Obsidian plugin
 
-### `lesson_note`
-
-Activates a concept and its relationships:
+Plugin source is under:
 
 ```text
-lesson_note({
-  topic: "supervisor-pattern",
-  prerequisites: ["agent-loop"],
-  related: ["handoffs"]
-})
+obsidian/pi-learning/
 ```
 
-It also routes subsequent quizzes to `quiz/supervisor-pattern-lesson.md` and adds explicit relationships/backlinks when target notes exist.
+Install it into the vault with:
 
-### `lesson_write`
-
-Updates one stable topic section:
-
-```text
-lesson_write({
-  section: "mental-model",
-  content: "Think of the supervisor as the routing/control layer...",
-  mode: "replace"
-})
+```bash
+bash .pi/scripts/install-obsidian-plugin.sh
 ```
 
-`replace` is the default. `append` is reserved for genuinely additive examples/notes.
-
-### `lesson_misconception`
-
-Records an unresolved misconception as a checkbox item; calling it later with the same wording and `resolved: true` marks it resolved. During diagnostics, `topic` can explicitly target the concept even though no lesson note is active yet.
-
-### `lesson_quality`
-
-Performs a mechanical audit of the active topic note: required sections, thin content, unresolved misconceptions, standardized metadata, and quiz evidence. Semantic accuracy and redundancy still require model review.
-
-### `lesson_progress`
-
-Tracks concept state (`learning`, `blocked`, `complete`). Completion is blocked if required note quality is not met, unresolved misconceptions remain, there is no lesson quiz evidence, or the latest lesson quiz was not correct.
-
-### `lesson_finish`
-
-Marks the overall plan complete. By default it refuses while unchecked Learning Sequence items remain.
-
-## Quiz behavior
-
-Questions are buffered until the quiz result arrives, then the question/result pair is appended as one chronological unit. Diagnostic and lesson quizzes stay in separate files.
-
-Lesson quiz results also update the active topic's cumulative quiz statistics and confidence metadata. A miss returns the topic to `learning`; it cannot be marked complete until remediation and a subsequent correct quiz.
-
-## Commands
-
-- `/learn <dir>` — set/change the subject and ensure `plan/`, `topic/`, `quiz/` exist.
-- `/lesson <slug>` — manual concept activation escape hatch; normal teaching uses `lesson_note`.
-- `/lesson-stop` — stop active note/quiz capture without completing the overall track.
-- `/lesson-status` — show subject, lifecycle phase, current track, plan, topic note, and quiz target.
-
-## Intentionally omitted
-
-Ordinary user chat, ordinary assistant chat, tool chatter, researcher/subagent process output, and orchestration noise are not copied into the learning artifacts.
+Then enable **Pi Learning** in Obsidian → Settings → Community plugins.
