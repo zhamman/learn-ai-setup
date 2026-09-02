@@ -1,13 +1,13 @@
 ---
 name: lesson-notes
-description: Maintain an adaptive learning track as standardized Obsidian plans, topic notes, quiz history, and coding-assessment evidence. Use with the teach skill and lesson-log extensions.
+description: Use Obsidian as the clean learner-facing interface for adaptive plans, lesson notes, conceptual quizzes, and coding exercises. Machine state stays hidden under .learning/.
 ---
 
 # Lesson Notes
 
-Pi chat is the working conversation. Obsidian is the durable learning system.
+Pi owns reasoning, teaching, adaptation, and grading. Obsidian is the learner-facing interface.
 
-The learner chooses one subject with `/learn`. Every subject uses exactly three artifact directories:
+The visible subject layout stays simple:
 
 ```text
 <subject>/
@@ -16,384 +16,347 @@ The learner chooses one subject with `/learn`. Every subject uses exactly three 
 └── quiz/
 ```
 
-Example:
+Internal state lives separately and should not be treated as a human note:
 
 ```text
-ai-engineering/
-├── plan/
-│   └── agent-orchestration.md
-├── topic/
-│   ├── agent-loop.md
-│   ├── supervisor-pattern.md
-│   └── handoffs.md
-└── quiz/
-    ├── agent-orchestration-diagnostic.md
-    ├── agent-loop-lesson.md
-    └── supervisor-pattern-lesson.md
+<subject>/.learning/
+├── state.json
+├── assessments/
+├── submissions/
+└── results/
 ```
 
-`plan/` is the current adaptive roadmap. `topic/` is the clean knowledge base. `quiz/` is chronological assessment evidence. A quiz file may contain multiple-choice/reasoning quizzes, coding exercises, or both. Ordinary chat belongs in none of them.
+Never copy machine metadata into the visible Markdown. The learner does not want frontmatter fields such as status, confidence, date, completion, quiz totals, scores, or internal lifecycle state in lesson/plan/quiz documents.
 
-## 1. Standardized artifacts
+The Pi Learning Obsidian plugin renders `learning-quiz` and `learning-code` blocks as the interactive UI. Do not imitate application controls with Markdown task checkboxes or callout boxes.
 
-The extensions own frontmatter, headings, paths, assessment statistics, and timestamps. Do not manually reproduce those structures inside tool content.
+## Visible design principles
 
-A topic note has standardized metadata plus these sections:
+Visible files are documents for a human to read, not databases.
 
-```text
-# Concept
-## Core Idea
-## Why It Exists
-## Mental Model
-## How It Works
-## Example
-## Common Mistakes
-## Misconceptions
-## Related Concepts
-## Notes
+### Topic note
+
+A topic note begins with only what is useful:
+
+```markdown
+# The Agent Loop
+
+How an AI agent repeatedly decides, acts, observes, and decides again.
 ```
 
-Topic frontmatter tracks at least `type`, `subject`, `topic`, `status`, `confidence`, `updated`, `prerequisites`, `related`, and assessment statistics.
+Then create headings only when there is actual content for them. Do not prefill empty sections.
 
-A plan has:
+Useful headings often include:
 
 ```text
-# Track — Learning Plan
+Core idea
+Why it exists
+Mental model
+How it works
+Example
+What matters
+Common mistakes
+```
+
+Those are suggestions, not a rigid schema. Use the headings that best explain the current concept.
+
+### Learning plan
+
+Keep the plan compact and readable:
+
+```markdown
+# Agent Architecture
+
+A path from basic agent execution to orchestration.
+
 ## Goal
-## Starting Point
-## Dependency Map
-## Learning Sequence
-## Progress
-## Current Position
-## Next
+...
+
+## Starting point
+...
+
+## Dependency map
+...
+
+## Path
+1. **Agent loop** — current
+   Decision → action → observation → next decision.
+2. **Tool execution** — next
+   How tool calls become real actions and new context.
+3. **Delegation**
+4. **Parallel orchestration**
 ```
 
-A quiz file has standardized frontmatter identifying its subject, topic, diagnostic/lesson phase, status, date, cumulative assessment score, and coding-exercise statistics when code exercises are used.
+Do not expose a separate status table, progress database, dates, confidence values, or quiz statistics. Hidden state already tracks those things.
 
-## 2. Explicit lesson lifecycle
+### Quiz files
 
-Normal teaching follows this lifecycle:
+The quiz file is an assessment surface. The extension writes compact `learning-quiz` or `learning-code` blocks; the Obsidian plugin renders the modern UI.
+
+Do not add green/orange callouts, task-list answers, checkbox submit controls, or duplicate terminal questions.
+
+## Learning lifecycle
+
+Normal flow:
 
 ```text
-start
-  ↓
-diagnostic
-  ↓
-plan
-  ↓
-teach concept
-  ↓
-assess (quiz OR coding exercise)
-  ↓
-adapt / complete concept
-  ↓
+/learn <subject>
+      ↓
+lesson_start(overall track)
+      ↓
+diagnostic in Obsidian
+      ↓
+lesson_plan(clean adaptive roadmap)
+      ↓
+present plan and wait for approval
+      ↓
+lesson_note(concept)
+      ↓
+write substantive lesson to topic/<concept>.md
+      ↓
+learner reads it in Obsidian
+      ↓
+Obsidian quiz or coding exercise
+      ↓
+submission automatically reaches Pi
+      ↓
+adapt / reteach / complete
+      ↓
+update clean plan
+      ↓
 next concept
-  ↓
-finish
 ```
 
-### Start
+## Start and diagnostic
 
-After `/learn <subject>` is configured and before the first diagnostic assessment, call:
+After `/learn <subject>` has been configured and before the first diagnostic assessment:
 
 ```text
-lesson_start({
-  topic: "<overall-track-slug>",
-  title: "<optional readable title>"
-})
+lesson_start({ topic: "<overall-track-slug>" })
 ```
 
-This initializes the plan and routes the opening assessment to:
+This routes the opening diagnostic to:
 
 ```text
 quiz/<overall-track>-diagnostic.md
 ```
 
-Do not call `lesson_note` before the diagnostic unless the learner explicitly skips probing.
+Use `lesson_obsidian_quiz` for conceptual diagnostic checks.
 
-### Diagnostic
+Use `lesson_code_exercise` during the diagnostic only when implementation ability is genuinely part of the frontier being measured.
 
-Use the `teach` skill's probe phase to map the learner's frontier.
+The learner submits from Obsidian. Do not ask them to repeat the answer/code in the terminal.
 
-Use ordinary `quiz` when the thing being measured is conceptual knowledge, reasoning, distinctions, or prediction. Use `lesson_code_exercise` when the frontier cannot be established without seeing whether the learner can actually write, debug, transform, configure, or query code.
+## Plan after the diagnostic
 
-For a coding-heavy track, a diagnostic may legitimately mix both modalities. Do not use a coding exercise merely because the subject happens to involve software; use it only when implementation ability is part of the relevant learning objective.
+Diagnostic evidence must change the plan.
 
-If the diagnostic reveals a genuine mistaken mental model, not merely one careless miss, record it against the relevant concept with `lesson_misconception`.
+- mastered prerequisite → mark it `done` or `skipped`
+- uncertain edge → make it `current` or `next`
+- missing prerequisite → insert it before descendants
+- misconception → plan explicit correction
+- implementation gap → mark that concept `requiresCode: true` when activating it later
 
-A diagnostic misconception may create the standardized topic note before that concept is taught. That is intentional: the gap is durable learning state.
+Write the plan with `lesson_plan` using structured steps.
 
-### Plan
-
-After the diagnostic is sufficiently mapped, build the dependency DAG and call `lesson_plan` with the complete current roadmap.
-
-The diagnostic must materially affect the plan:
-
-- mastered prerequisite → mark checked/skipped rather than reteaching by default
-- uncertain edge → teach it
-- missing deeper prerequisite → insert it before descendants
-- misconception → preserve it and plan explicit correction
-- implementation gap → include a coding exercise at the node where practical competence must be demonstrated
-
-Then present the plan to the learner and wait for approval, as required by `teach`.
-
-### Teach
-
-Before substantive teaching of each graph node, call `lesson_note` with the concept slug and known prerequisite/related slugs.
-
-This activates:
+Example concept path:
 
 ```text
-topic/<concept>.md
+steps: [
+  {
+    topic: "agent-loop",
+    title: "Agent loop",
+    description: "Decision → action → observation → next decision.",
+    state: "current"
+  },
+  {
+    topic: "tool-execution",
+    title: "Tool execution",
+    description: "How tool calls become real actions and new context.",
+    state: "next"
+  },
+  {
+    topic: "delegation",
+    title: "Delegation",
+    state: "upcoming"
+  }
+]
 ```
 
-and automatically routes assessments to:
+Then show the learner the plan and wait for approval before teaching.
+
+## Teach a concept in Obsidian first
+
+Before substantive teaching of each graph node:
 
 ```text
-quiz/<concept>-lesson.md
-```
-
-Write durable knowledge section-by-section with `lesson_write`.
-
-## Assessment modality: choose what proves understanding
-
-The phrase **quiz-check** in the `teach` skill means **graded evidence that the node landed**. It does not require multiple-choice.
-
-Choose the assessment that measures the actual objective:
-
-```text
-Can understanding be demonstrated by selecting/reasoning about a correct claim?
-        ↓ yes
-      quiz
-
-Does full understanding require producing/debugging/configuring/querying code?
-        ↓ yes
-lesson_code_exercise
-```
-
-Use `quiz` for definitions, causal reasoning, architecture distinctions, mental-model checks, prediction, and conceptual edge finding.
-
-Use `lesson_code_exercise` when the learner must be able to do something in code, for example:
-
-- implement a function, class, API handler, algorithm, or orchestration pattern
-- complete or repair incomplete code
-- debug a real bug or explain/fix failing behavior
-- write a SQL query
-- wire together tools/agents/configuration
-- transform code while preserving required behavior
-- use a library/API correctly when usage itself is part of the concept
-
-Do not force coding exercises onto concepts whose learning objective is genuinely conceptual.
-
-A **passed coding exercise counts as the quiz-check for that node**. Do not add a multiple-choice quiz afterward solely because another instruction says “quiz-check.” Use both only when they test meaningfully different dimensions of understanding.
-
-For implementation-heavy concepts, do not mark the concept complete until the learner has successfully completed at least one coding exercise that actually tests the required implementation skill.
-
-## Coding-exercise workflow
-
-Create a coding assessment with:
-
-```text
-lesson_code_exercise({
-  language: "python",
-  prompt: "Implement ...",
-  starterCode: "def ...",
-  criteria: [
-    "Handles ...",
-    "Returns ...",
-    "Does not ..."
-  ]
+lesson_note({
+  topic: "agent-loop",
+  title: "The Agent Loop",
+  summary: "How an AI agent repeatedly decides, acts, observes, and decides again.",
+  prerequisites: [],
+  related: ["tool-execution"],
+  requiresCode: true
 })
 ```
 
-The tool logs the exercise in the current diagnostic/lesson quiz file and returns an `exerciseId`.
+`requiresCode` should be true only when implementation/debugging/querying ability is necessary for full understanding of that concept.
 
-Then present the exercise to the learner and wait for their code. Do not reveal the solution or solution-shaped pseudocode before they attempt it.
-
-When the learner submits code:
-
-1. Evaluate it against every stated acceptance criterion.
-2. When feasible and safe, actually run, compile, lint, or test the code rather than grading only by inspection.
-3. Do not invent test results. Only report evidence you actually observed.
-4. Record the exact submission and grade with `lesson_code_result`.
+Then write the actual lesson using `lesson_write`.
 
 Example:
 
 ```text
-lesson_code_result({
-  exerciseId: "agent-loop-code-1",
-  submission: "<learner code>",
-  correct: false,
-  feedback: "The loop retries correctly, but it never feeds the tool result back into the next model call.",
-  testEvidence: "Observed failing case: ..."
+lesson_write({
+  heading: "Core idea",
+  content: "<clean durable explanation>",
+  mode: "replace"
 })
 ```
 
-An incorrect exercise remains open for revised submissions. Let the learner repair the same exercise when that is pedagogically useful instead of immediately replacing it with a new one.
-
-Coding attempts count as assessment evidence in the same mastery statistics used by normal lesson quizzes. A failed coding attempt sets the latest assessment state to incorrect, so normal concept completion remains blocked until the concept is repaired and subsequently verified.
-
-If a coding failure reveals a genuine misconception, use `lesson_misconception`. If it exposes a missing prerequisite or changes the optimal graph, revise `lesson_plan` before advancing.
-
-## 3. Misconception tracking
-
-Misconceptions are durable state, not throwaway assessment commentary.
-
-Use `lesson_misconception` only when evidence supports an actual wrong model. Do not turn every wrong quiz answer, syntax typo, or coding bug into a misconception.
-
-Unresolved entries appear as unchecked items in `## Misconceptions` and block concept completion. Resolved entries become checked items. Use the exact same `misconception` wording when resolving an existing entry so the extension updates it instead of creating a duplicate.
-
-The correction should state the replacement mental model positively, not merely say the previous answer was wrong.
-
-## 4. Assessment-driven adaptive graph
-
-Treat assessment data as control signals for the teaching graph.
+And then:
 
 ```text
-correct assessment + good note + no unresolved misconception
-                         ↓
-                  concept can complete
-
-miss / failed code / don't know
-            ↓
-inspect the weak edge
-            ↓
-reteach / repair prerequisite
-            ↓
-reassess with the modality that actually proves the objective
-            ↓
-update plan if graph changed
+lesson_write({
+  heading: "Mental model",
+  content: "<clean durable mental model>",
+  mode: "replace"
+})
 ```
 
-Do not advance merely because the concept was explained once.
+The extension deliberately refuses lesson-phase assessments until the note contains substantive readable teaching. This is intentional: **lesson first, assessment second**.
 
-A recognition-only quiz should not override evidence that the learner still cannot perform an implementation skill required by the node. Conversely, do not demand code for a purely conceptual node simply to make assessment harder.
+Terminal prose should be brief and navigational. Do not make the learner read the actual lesson primarily in the terminal.
 
-## 5. Concept prerequisites and backlinks
+## Section-aware writing without rigid templates
 
-The learning plan is a dependency graph, so preserve those edges in the notes.
+`lesson_write` takes a freeform human-readable heading.
 
-Whenever calling `lesson_note`, pass known prerequisite slugs and useful related slugs. Use stable concept slugs that correspond to note filenames.
+Use `mode: "replace"` by default. If a clarification improves an existing section, replace that section with the complete improved explanation instead of appending an “actually...” correction beneath obsolete text.
 
-A prerequisite means the current explanation genuinely depends on it. `related` means useful conceptual adjacency without strict dependency. Do not invent relationships merely to fill metadata.
+Use `mode: "append"` only for genuinely additive material, such as another distinct worked example.
 
-If a relationship changes because the learner's graph changes, call `lesson_note` again with the corrected arrays.
+Do not create headings merely because a template says they should exist.
 
-## 9. Note-quality evaluator
+## Choose the assessment that proves understanding
 
-Before treating a concept as complete, call:
+A quiz-check means graded evidence that the node landed. It does not mean multiple choice specifically.
+
+Use `lesson_obsidian_quiz` for:
+
+- definitions
+- causal reasoning
+- architecture distinctions
+- prediction
+- mental-model checks
+- conceptual edge finding
+
+Use `lesson_code_exercise` when full understanding requires producing or repairing code, for example:
+
+- implementing a function/class/API handler
+- writing an agent loop
+- debugging failing code
+- writing SQL
+- wiring tools/agents/configuration
+- transforming code while preserving behavior
+- using a library/API correctly when usage itself is the concept
+
+A passed coding exercise counts as the quiz-check. Do not add a multiple-choice question afterward solely to satisfy wording in another teaching instruction.
+
+Use both only when they measure meaningfully different required dimensions.
+
+## Obsidian conceptual quiz workflow
+
+Create the assessment:
+
+```text
+lesson_obsidian_quiz({
+  label: "Check 1",
+  question: "Why must a tool result be added back into context?",
+  options: ["...", "...", "...", "..."],
+  correctIndex: 1,
+  explanation: "..."
+})
+```
+
+Then stop and wait.
+
+The Obsidian plugin renders proper selectable options and a real **Submit answer** button. Correct-answer data stays hidden under `.learning/`.
+
+The file submission wakes Pi automatically. Do not ask the learner to type the option again in the terminal.
+
+## Obsidian coding exercise workflow
+
+Create the exercise:
+
+```text
+lesson_code_exercise({
+  label: "Coding exercise",
+  language: "python",
+  prompt: "Complete the loop so tool results are fed back into the next model call.",
+  starterCode: "def run_agent(model, context):\n    ...",
+  criteria: [
+    "Calls the model with current context",
+    "Executes requested tools",
+    "Feeds tool results into the next model call",
+    "Stops on a final answer"
+  ]
+})
+```
+
+Then stop and wait.
+
+The learner writes code inside the plugin's editor and presses **Submit code**.
+
+When Pi receives the submission:
+
+1. Evaluate every stated criterion.
+2. When feasible and safe, actually run/compile/test the code.
+3. Never invent test evidence.
+4. Call `lesson_code_result` with the exact submission and verified result.
+5. If wrong, explain the decisive gap without immediately dumping the complete solution; reteach and allow a revision.
+
+## Misconceptions
+
+Misconceptions are useful adaptive state but are not required to clutter the visible note.
+
+Use `lesson_misconception` when evidence supports an actual mistaken mental model. Do not turn every wrong click into a misconception.
+
+The misconception remains hidden under `.learning/state.json` and blocks completion until resolved.
+
+When corrected, call it again with the same misconception text and `resolved: true`.
+
+## Quality and completion
+
+Before completing a concept:
 
 ```text
 lesson_quality({})
 ```
 
-It checks mechanically for standardized metadata, required sections, suspiciously thin content, unresolved misconceptions, and assessment evidence.
+The quality gate checks for readable substance rather than a rigid set of six template headings. It also checks hidden mastery evidence, unresolved misconceptions, and required coding evidence.
 
-Then perform the semantic checks the extension cannot automate reliably:
-
-- Is every claim accurate?
-- Does the note make sense without the chat?
-- Are explanations motivated/connected rather than arbitrary where appropriate?
-- Did clarification supersede wording that should be replaced?
-- Is anything repeated or contradictory?
-- Did conversational/process language leak into the note?
-
-Repair the note before `lesson_progress({ status: "complete" })`.
-
-For implementation-heavy nodes, also verify that successful coding-assessment evidence exists before calling the concept complete.
-
-## 10. Section-aware topic updates
-
-Never dump free-form lesson prose onto the end of a topic file.
-
-Use:
+Then:
 
 ```text
-lesson_write({
-  section: "core-idea",
-  content: "<complete current Core Idea section>",
-  mode: "replace"
-})
+lesson_progress({ status: "complete" })
 ```
 
-Available section keys are:
+Completion should fail when:
 
-```text
-core-idea
-why-it-exists
-mental-model
-how-it-works
-example
-common-mistakes
-notes
-```
+- the note is still too thin
+- there are empty/template sections
+- unresolved misconceptions remain
+- no assessment has been completed
+- the latest assessment is incorrect
+- `requiresCode` is true but no successful coding exercise exists
 
-Default to `mode: "replace"`. When clarification improves an explanation, replace that section with the better complete version instead of appending a correction fragment.
+After a concept is completed, update `lesson_plan` so the visible **Path** shows the new current/next nodes without exposing machine statistics.
 
-Use `mode: "append"` only for genuinely additive material, primarily an additional distinct example or a small durable note.
+## Core rule
 
-`## Misconceptions` is managed through `lesson_misconception`. `## Related Concepts` is managed from `lesson_note` relationship metadata. Assessment content belongs under `quiz/`, not in topic notes.
+The visible vault should feel like a polished course written for the learner.
 
-## Completing a concept
+The hidden `.learning/` directory should feel like the database backing that course.
 
-After the appropriate assessment succeeds:
-
-1. Resolve any genuine misconceptions that have been demonstrably corrected.
-2. Run `lesson_quality({})` and repair the note.
-3. For implementation-heavy concepts, confirm a coding exercise passed.
-4. Call `lesson_progress({ status: "complete" })`.
-5. Update `lesson_plan` so Progress, Current Position, Next, and the checklist match the evidence.
-
-If a prerequisite gap prevents progress instead, use `lesson_progress({ status: "blocked", reason: "..." })` and revise the plan.
-
-## Finishing the track
-
-When all approved plan nodes are done, make one final `lesson_plan` update with the completed checklist and call `lesson_finish`.
-
-`lesson_finish` normally refuses while unchecked learning-sequence items remain. `force: true` is only for an explicit learner request to stop early.
-
-## Full integration with `teach`
-
-The normal combined flow is:
-
-```text
-/learn <subject>
-        ↓
-lesson_start(overall track)
-        ↓
-teach Phase 1: diagnostic probe
-        ↓
-quiz and/or coding exercise as required to map the true frontier
-        ↓
-record real misconceptions
-        ↓
-lesson_plan(adaptive DAG)
-        ↓
-present plan + wait for approval
-        ↓
-lesson_note(concept + prerequisites/related)
-        ↓
-teach node conversationally
-        ↓
-lesson_write(section-aware durable knowledge)
-        ↓
-choose assessment modality
-   ↙                 ↘
-quiz          coding exercise
-   ↘                 ↙
-       graded evidence
-              ↓
-miss/fail? → diagnose/reteach/misconception/plan adaptation/reassess
-              ↓
-lesson_quality
-              ↓
-lesson_progress(complete)
-              ↓
-lesson_plan(update progress + next)
-              ↓
-next concept
-              ↓
-lesson_finish
-```
-
-The topic boundary follows the knowledge graph, not chat turns. The plan tracks the graph, topic notes track durable understanding, and quiz files track assessment evidence—including code when code is what understanding requires.
+Never confuse the two.
