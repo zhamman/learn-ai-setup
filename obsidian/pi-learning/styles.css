@@ -38,15 +38,6 @@
   line-height: 1.74;
 }
 
-.pi-learning-topic-view .markdown-reading-view pre,
-.pi-learning-plan-view .markdown-reading-view pre {
-  margin: 1.4rem 0;
-  padding: 1rem 1.1rem;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
-  box-shadow: none;
-}
-
 .pi-learning-plan-view .markdown-reading-view ol,
 .pi-learning-plan-view .markdown-reading-view ul {
   padding-left: 1.25rem;
@@ -64,8 +55,17 @@
   padding-bottom: 6rem;
 }
 
+/* Keep the human-authored H1 as the page title; hide only Obsidian's inline filename title. */
 .pi-learning-quiz-view .markdown-reading-view h1 {
-  display: none !important;
+  display: block !important;
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto 1.15rem !important;
+  color: var(--text-normal);
+  font-size: clamp(1.55rem, 2.7vw, 1.85rem) !important;
+  line-height: 1.15 !important;
+  letter-spacing: -0.032em;
+  font-weight: 700;
 }
 
 .pi-learning-quiz-view .markdown-reading-view > .markdown-preview-sizer > div:not(.el-pre) {
@@ -83,8 +83,10 @@
   --pi-text: #181818;
   --pi-button-bg: #181818;
   --pi-button-text: #ffffff;
-  --pi-code-bg: #171717;
-  --pi-code-text: #f4f4f4;
+  --pi-code-bg: #0d0d0d;
+  --pi-code-header: #171717;
+  --pi-code-border: #2d2d2d;
+  --pi-code-text: #e6edf3;
 
   width: 100%;
   max-width: 700px;
@@ -107,8 +109,10 @@
   --pi-text: #efefef;
   --pi-button-bg: #efefef;
   --pi-button-text: #171717;
-  --pi-code-bg: #171717;
-  --pi-code-text: #f2f2f2;
+  --pi-code-bg: #0d0d0d;
+  --pi-code-header: #171717;
+  --pi-code-border: #303030;
+  --pi-code-text: #e6edf3;
 
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.13);
 }
@@ -161,25 +165,216 @@
   border-radius: 0 !important;
   background: transparent !important;
   color: inherit !important;
-  font-family: var(--font-monospace);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 0.88em;
   font-weight: 560;
 }
 
-.pi-learning-question pre {
-  margin: 1rem 0 1.05rem;
-  padding: 0.9rem 1rem;
-  border: 1px solid #303030;
-  border-radius: 11px;
-  background: var(--pi-code-bg) !important;
-  color: var(--pi-code-text) !important;
+/* ChatGPT-like rendered code blocks across lessons, plans, quizzes, and feedback. */
+.pi-learning-topic-view .markdown-reading-view pre,
+.pi-learning-plan-view .markdown-reading-view pre,
+.pi-learning-question pre,
+.pi-learning-result-copy pre {
+  position: relative;
+  overflow-x: auto;
+  margin: 1.15rem 0 !important;
+  padding: 2.75rem 1.1rem 1.05rem !important;
+  border: 1px solid #2d2d2d !important;
+  border-radius: 12px !important;
+  background: #0d0d0d !important;
+  color: #e6edf3 !important;
   box-shadow: none !important;
-  font-size: 0.78rem;
-  line-height: 1.58;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
+  font-size: 0.82rem !important;
+  line-height: 1.65 !important;
+  tab-size: 4;
 }
 
-.pi-learning-question pre code {
-  color: inherit !important;
+/* Header bar. */
+.pi-learning-topic-view .markdown-reading-view pre::before,
+.pi-learning-plan-view .markdown-reading-view pre::before,
+.pi-learning-question pre::before,
+.pi-learning-result-copy pre::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2rem;
+  border-bottom: 1px solid #292929;
+  background: #171717;
+  pointer-events: none;
+}
+
+/* Language label. Defaults to code, then common languages override it below. */
+.pi-learning-topic-view .markdown-reading-view pre::after,
+.pi-learning-plan-view .markdown-reading-view pre::after,
+.pi-learning-question pre::after,
+.pi-learning-result-copy pre::after {
+  content: "code";
+  position: absolute;
+  top: 0.48rem;
+  left: 0.85rem;
+  z-index: 2;
+  color: #a7a7a7;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.68rem;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: lowercase;
+  pointer-events: none;
+}
+
+.pi-learning-topic-view pre:has(> code.language-python)::after,
+.pi-learning-plan-view pre:has(> code.language-python)::after,
+.pi-learning-question pre:has(> code.language-python)::after,
+.pi-learning-result-copy pre:has(> code.language-python)::after { content: "python"; }
+
+.pi-learning-topic-view pre:has(> code.language-javascript)::after,
+.pi-learning-plan-view pre:has(> code.language-javascript)::after,
+.pi-learning-question pre:has(> code.language-javascript)::after,
+.pi-learning-result-copy pre:has(> code.language-javascript)::after { content: "javascript"; }
+
+.pi-learning-topic-view pre:has(> code.language-js)::after,
+.pi-learning-plan-view pre:has(> code.language-js)::after,
+.pi-learning-question pre:has(> code.language-js)::after,
+.pi-learning-result-copy pre:has(> code.language-js)::after { content: "javascript"; }
+
+.pi-learning-topic-view pre:has(> code.language-typescript)::after,
+.pi-learning-plan-view pre:has(> code.language-typescript)::after,
+.pi-learning-question pre:has(> code.language-typescript)::after,
+.pi-learning-result-copy pre:has(> code.language-typescript)::after { content: "typescript"; }
+
+.pi-learning-topic-view pre:has(> code.language-ts)::after,
+.pi-learning-plan-view pre:has(> code.language-ts)::after,
+.pi-learning-question pre:has(> code.language-ts)::after,
+.pi-learning-result-copy pre:has(> code.language-ts)::after { content: "typescript"; }
+
+.pi-learning-topic-view pre:has(> code.language-json)::after,
+.pi-learning-plan-view pre:has(> code.language-json)::after,
+.pi-learning-question pre:has(> code.language-json)::after,
+.pi-learning-result-copy pre:has(> code.language-json)::after { content: "json"; }
+
+.pi-learning-topic-view pre:has(> code.language-bash)::after,
+.pi-learning-plan-view pre:has(> code.language-bash)::after,
+.pi-learning-question pre:has(> code.language-bash)::after,
+.pi-learning-result-copy pre:has(> code.language-bash)::after,
+.pi-learning-topic-view pre:has(> code.language-shell)::after,
+.pi-learning-plan-view pre:has(> code.language-shell)::after,
+.pi-learning-question pre:has(> code.language-shell)::after,
+.pi-learning-result-copy pre:has(> code.language-shell)::after { content: "bash"; }
+
+.pi-learning-topic-view pre:has(> code.language-sql)::after,
+.pi-learning-plan-view pre:has(> code.language-sql)::after,
+.pi-learning-question pre:has(> code.language-sql)::after,
+.pi-learning-result-copy pre:has(> code.language-sql)::after { content: "sql"; }
+
+.pi-learning-topic-view pre:has(> code.language-html)::after,
+.pi-learning-plan-view pre:has(> code.language-html)::after,
+.pi-learning-question pre:has(> code.language-html)::after,
+.pi-learning-result-copy pre:has(> code.language-html)::after { content: "html"; }
+
+.pi-learning-topic-view pre:has(> code.language-css)::after,
+.pi-learning-plan-view pre:has(> code.language-css)::after,
+.pi-learning-question pre:has(> code.language-css)::after,
+.pi-learning-result-copy pre:has(> code.language-css)::after { content: "css"; }
+
+/* Reset theme-specific pre/code colors so token colors below are deterministic. */
+.pi-learning-topic-view .markdown-reading-view pre code,
+.pi-learning-plan-view .markdown-reading-view pre code,
+.pi-learning-question pre code,
+.pi-learning-result-copy pre code {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: #e6edf3 !important;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  text-shadow: none !important;
+}
+
+/* Explicit Prism token palette — close to the dark code blocks used in ChatGPT. */
+.pi-learning-topic-view pre .token.comment,
+.pi-learning-plan-view pre .token.comment,
+.pi-learning-question pre .token.comment,
+.pi-learning-result-copy pre .token.comment,
+.pi-learning-topic-view pre .token.prolog,
+.pi-learning-plan-view pre .token.prolog,
+.pi-learning-question pre .token.prolog,
+.pi-learning-result-copy pre .token.prolog {
+  color: #8b949e !important;
+  font-style: italic;
+}
+
+.pi-learning-topic-view pre .token.keyword,
+.pi-learning-plan-view pre .token.keyword,
+.pi-learning-question pre .token.keyword,
+.pi-learning-result-copy pre .token.keyword,
+.pi-learning-topic-view pre .token.boolean,
+.pi-learning-plan-view pre .token.boolean,
+.pi-learning-question pre .token.boolean,
+.pi-learning-result-copy pre .token.boolean {
+  color: #ff7ab2 !important;
+}
+
+.pi-learning-topic-view pre .token.function,
+.pi-learning-plan-view pre .token.function,
+.pi-learning-question pre .token.function,
+.pi-learning-result-copy pre .token.function {
+  color: #dcdcaa !important;
+}
+
+.pi-learning-topic-view pre .token.string,
+.pi-learning-plan-view pre .token.string,
+.pi-learning-question pre .token.string,
+.pi-learning-result-copy pre .token.string,
+.pi-learning-topic-view pre .token.char,
+.pi-learning-plan-view pre .token.char,
+.pi-learning-question pre .token.char,
+.pi-learning-result-copy pre .token.char {
+  color: #a5d6a7 !important;
+}
+
+.pi-learning-topic-view pre .token.number,
+.pi-learning-plan-view pre .token.number,
+.pi-learning-question pre .token.number,
+.pi-learning-result-copy pre .token.number {
+  color: #f78c6c !important;
+}
+
+.pi-learning-topic-view pre .token.class-name,
+.pi-learning-plan-view pre .token.class-name,
+.pi-learning-question pre .token.class-name,
+.pi-learning-result-copy pre .token.class-name,
+.pi-learning-topic-view pre .token.builtin,
+.pi-learning-plan-view pre .token.builtin,
+.pi-learning-question pre .token.builtin,
+.pi-learning-result-copy pre .token.builtin {
+  color: #82aaff !important;
+}
+
+.pi-learning-topic-view pre .token.operator,
+.pi-learning-plan-view pre .token.operator,
+.pi-learning-question pre .token.operator,
+.pi-learning-result-copy pre .token.operator {
+  color: #c9d1d9 !important;
+}
+
+.pi-learning-topic-view pre .token.punctuation,
+.pi-learning-plan-view pre .token.punctuation,
+.pi-learning-question pre .token.punctuation,
+.pi-learning-result-copy pre .token.punctuation {
+  color: #b9c0c8 !important;
+}
+
+.pi-learning-topic-view pre .token.variable,
+.pi-learning-plan-view pre .token.variable,
+.pi-learning-question pre .token.variable,
+.pi-learning-result-copy pre .token.variable,
+.pi-learning-topic-view pre .token.parameter,
+.pi-learning-plan-view pre .token.parameter,
+.pi-learning-question pre .token.parameter,
+.pi-learning-result-copy pre .token.parameter {
+  color: #e6edf3 !important;
 }
 
 /* Answer options */
@@ -371,19 +566,21 @@
   overflow: hidden;
   margin-top: 1.15rem;
   border: 1px solid #303030;
-  border-radius: 11px;
-  background: var(--pi-code-bg);
+  border-radius: 12px;
+  background: #0d0d0d;
 }
 
 .pi-learning-code-label {
   display: flex;
   align-items: center;
-  min-height: 1.95rem;
+  min-height: 2rem;
   padding: 0 0.9rem;
-  border-bottom: 1px solid #2b2b2b;
-  color: #858585;
-  font-family: var(--font-monospace);
-  font-size: 0.66rem;
+  border-bottom: 1px solid #292929;
+  background: #171717;
+  color: #a7a7a7;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.68rem;
+  font-weight: 500;
   text-transform: lowercase;
 }
 
@@ -392,16 +589,16 @@
   width: 100%;
   min-height: 280px;
   resize: vertical;
-  padding: 0.95rem 1rem 1.15rem;
+  padding: 1rem 1.05rem 1.2rem;
   border: 0 !important;
   border-radius: 0;
   outline: 0 !important;
-  background: var(--pi-code-bg) !important;
-  color: var(--pi-code-text) !important;
+  background: #0d0d0d !important;
+  color: #e6edf3 !important;
   box-shadow: none !important;
-  font-family: var(--font-monospace);
-  font-size: 0.8rem;
-  line-height: 1.6;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.82rem;
+  line-height: 1.65;
   tab-size: 4;
 }
 
@@ -415,12 +612,6 @@
 
 .pi-learning-test-evidence pre {
   margin: 0;
-  padding: 0.85rem 0.95rem;
-  border: 1px solid var(--pi-border);
-  border-radius: 10px;
-  background: var(--pi-code-bg) !important;
-  color: var(--pi-code-text) !important;
-  box-shadow: none;
 }
 
 .pi-learning-error {
@@ -437,6 +628,11 @@
   .pi-learning-plan-view .markdown-reading-view .markdown-preview-sizer,
   .pi-learning-quiz-view .markdown-reading-view .markdown-preview-sizer {
     padding-top: 1.5rem;
+  }
+
+  .pi-learning-quiz-view .markdown-reading-view h1 {
+    margin-bottom: 0.9rem !important;
+    font-size: 1.4rem !important;
   }
 
   .pi-learning-assessment {
