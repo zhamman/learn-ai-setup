@@ -6,7 +6,13 @@
   display: none !important;
 }
 
-/* Human-readable lesson/plan pages */
+.pi-learning-topic-view .markdown-reading-view,
+.pi-learning-plan-view .markdown-reading-view,
+.pi-learning-quiz-view .markdown-reading-view {
+  --pi-ui-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* Lesson / plan pages */
 .pi-learning-topic-view .markdown-reading-view .markdown-preview-sizer,
 .pi-learning-plan-view .markdown-reading-view .markdown-preview-sizer {
   max-width: 740px;
@@ -15,27 +21,36 @@
 }
 
 .pi-learning-topic-view .markdown-reading-view h1,
+.pi-learning-plan-view .markdown-reading-view h1,
+.pi-learning-quiz-view .markdown-reading-view h1 {
+  font-family: var(--pi-ui-font);
+  font-weight: 600 !important;
+  letter-spacing: -0.028em;
+}
+
+.pi-learning-topic-view .markdown-reading-view h1,
 .pi-learning-plan-view .markdown-reading-view h1 {
-  margin: 0 0 0.75rem;
-  font-size: clamp(2rem, 3.5vw, 2.4rem);
-  line-height: 1.08;
-  letter-spacing: -0.04em;
-  font-weight: 720;
+  margin: 0 0 0.8rem;
+  font-size: clamp(2rem, 3.5vw, 2.35rem);
+  line-height: 1.1;
 }
 
 .pi-learning-topic-view .markdown-reading-view h2,
 .pi-learning-plan-view .markdown-reading-view h2 {
-  margin: 2.8rem 0 0.7rem;
-  font-size: 1.28rem;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-  font-weight: 650;
+  margin: 2.7rem 0 0.75rem;
+  font-family: var(--pi-ui-font);
+  font-size: 1.26rem;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  font-weight: 600;
 }
 
 .pi-learning-topic-view .markdown-reading-view p,
 .pi-learning-plan-view .markdown-reading-view p {
   margin: 0 0 1rem;
-  line-height: 1.74;
+  font-family: var(--pi-ui-font);
+  font-weight: 400;
+  line-height: 1.72;
 }
 
 .pi-learning-plan-view .markdown-reading-view ol,
@@ -44,42 +59,43 @@
 }
 
 .pi-learning-plan-view .markdown-reading-view li {
-  margin: 0.7rem 0;
-  padding-left: 0.2rem;
+  margin: 0.65rem 0;
+  padding-left: 0.15rem;
 }
 
-/* Quiz files behave like a dedicated Reading View surface. */
+/* Quiz page */
 .pi-learning-quiz-view .markdown-reading-view .markdown-preview-sizer {
   max-width: 820px;
   padding-top: clamp(2.5rem, 7vh, 5rem);
   padding-bottom: 6rem;
 }
 
-/* Keep the human-authored H1 as the page title; hide only Obsidian's inline filename title. */
 .pi-learning-quiz-view .markdown-reading-view h1 {
   display: block !important;
   width: 100%;
   max-width: 700px;
-  margin: 0 auto 1.15rem !important;
+  margin: 0 auto 1.25rem !important;
   color: var(--text-normal);
-  font-size: clamp(1.55rem, 2.7vw, 1.85rem) !important;
-  line-height: 1.15 !important;
-  letter-spacing: -0.032em;
-  font-weight: 700;
+  font-size: clamp(1.6rem, 2.7vw, 1.9rem) !important;
+  line-height: 1.2 !important;
 }
 
 .pi-learning-quiz-view .markdown-reading-view > .markdown-preview-sizer > div:not(.el-pre) {
   max-width: 100%;
 }
 
+/* Only one assessment page is visible at a time. */
+.pi-learning-page-slot {
+  width: 100%;
+}
+
 /* Assessment surface */
 .pi-learning-assessment {
   --pi-card: #ffffff;
   --pi-border: #e6e6e2;
-  --pi-muted: #727272;
-  --pi-option: transparent;
+  --pi-muted: #747474;
   --pi-option-hover: #f7f7f5;
-  --pi-option-selected: #f3f3f0;
+  --pi-option-selected: #f1f1ee;
   --pi-text: #181818;
   --pi-button-bg: #181818;
   --pi-button-text: #ffffff;
@@ -91,53 +107,53 @@
   width: 100%;
   max-width: 700px;
   margin: 0 auto;
-  padding: 2.25rem 2.5rem 2.5rem;
+  padding: 2.15rem 2.35rem 1.35rem;
   border: 1px solid var(--pi-border);
   border-radius: 16px;
   background: var(--pi-card);
   color: var(--pi-text);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.035);
+  font-family: var(--pi-ui-font);
+  font-weight: 400;
 }
 
 .theme-dark .pi-learning-assessment {
   --pi-card: #202020;
   --pi-border: #303030;
-  --pi-muted: #8f8f8f;
-  --pi-option: transparent;
+  --pi-muted: #969696;
   --pi-option-hover: #252525;
-  --pi-option-selected: #272727;
-  --pi-text: #efefef;
+  --pi-option-selected: #282828;
+  --pi-text: #f0f0f0;
   --pi-button-bg: #efefef;
   --pi-button-text: #171717;
   --pi-code-bg: #0d0d0d;
   --pi-code-header: #171717;
   --pi-code-border: #303030;
   --pi-code-text: #e6edf3;
-
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.13);
 }
 
 .pi-learning-assessment-header {
-  margin-bottom: 0.9rem;
+  margin-bottom: 0.95rem;
 }
 
 .pi-learning-kicker {
   color: var(--pi-muted);
   font-size: 0.68rem;
   line-height: 1;
-  font-weight: 700;
-  letter-spacing: 0.13em;
+  font-weight: 600;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
 }
 
-/* Question content */
 .pi-learning-question {
-  margin: 0 0 1.75rem;
+  margin: 0 0 1.7rem;
   color: var(--pi-text);
-  font-size: 1.27rem;
-  line-height: 1.43;
-  letter-spacing: -0.018em;
-  font-weight: 620;
+  font-family: var(--pi-ui-font);
+  font-size: 1.22rem;
+  line-height: 1.48;
+  letter-spacing: -0.012em;
+  font-weight: 550;
 }
 
 .pi-learning-question > :first-child,
@@ -156,7 +172,6 @@
   margin: 0 0 0.9rem;
 }
 
-/* Inline code should read as typography, not a pill. */
 .pi-learning-question code:not(pre code),
 .pi-learning-option-text code:not(pre code),
 .pi-learning-result-copy code:not(pre code) {
@@ -167,10 +182,10 @@
   color: inherit !important;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 0.88em;
-  font-weight: 560;
+  font-weight: 500;
 }
 
-/* ChatGPT-like rendered code blocks across lessons, plans, quizzes, and feedback. */
+/* ChatGPT-like rendered code blocks */
 .pi-learning-topic-view .markdown-reading-view pre,
 .pi-learning-plan-view .markdown-reading-view pre,
 .pi-learning-question pre,
@@ -186,11 +201,11 @@
   box-shadow: none !important;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace !important;
   font-size: 0.82rem !important;
+  font-weight: 400 !important;
   line-height: 1.65 !important;
   tab-size: 4;
 }
 
-/* Header bar. */
 .pi-learning-topic-view .markdown-reading-view pre::before,
 .pi-learning-plan-view .markdown-reading-view pre::before,
 .pi-learning-question pre::before,
@@ -204,7 +219,6 @@
   pointer-events: none;
 }
 
-/* Language label. Defaults to code, then common languages override it below. */
 .pi-learning-topic-view .markdown-reading-view pre::after,
 .pi-learning-plan-view .markdown-reading-view pre::after,
 .pi-learning-question pre::after,
@@ -215,11 +229,10 @@
   left: 0.85rem;
   z-index: 2;
   color: #a7a7a7;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--pi-ui-font);
   font-size: 0.68rem;
   line-height: 1;
-  font-weight: 500;
-  letter-spacing: 0;
+  font-weight: 400;
   text-transform: lowercase;
   pointer-events: none;
 }
@@ -232,8 +245,7 @@
 .pi-learning-topic-view pre:has(> code.language-javascript)::after,
 .pi-learning-plan-view pre:has(> code.language-javascript)::after,
 .pi-learning-question pre:has(> code.language-javascript)::after,
-.pi-learning-result-copy pre:has(> code.language-javascript)::after { content: "javascript"; }
-
+.pi-learning-result-copy pre:has(> code.language-javascript)::after,
 .pi-learning-topic-view pre:has(> code.language-js)::after,
 .pi-learning-plan-view pre:has(> code.language-js)::after,
 .pi-learning-question pre:has(> code.language-js)::after,
@@ -242,8 +254,7 @@
 .pi-learning-topic-view pre:has(> code.language-typescript)::after,
 .pi-learning-plan-view pre:has(> code.language-typescript)::after,
 .pi-learning-question pre:has(> code.language-typescript)::after,
-.pi-learning-result-copy pre:has(> code.language-typescript)::after { content: "typescript"; }
-
+.pi-learning-result-copy pre:has(> code.language-typescript)::after,
 .pi-learning-topic-view pre:has(> code.language-ts)::after,
 .pi-learning-plan-view pre:has(> code.language-ts)::after,
 .pi-learning-question pre:has(> code.language-ts)::after,
@@ -268,17 +279,6 @@
 .pi-learning-question pre:has(> code.language-sql)::after,
 .pi-learning-result-copy pre:has(> code.language-sql)::after { content: "sql"; }
 
-.pi-learning-topic-view pre:has(> code.language-html)::after,
-.pi-learning-plan-view pre:has(> code.language-html)::after,
-.pi-learning-question pre:has(> code.language-html)::after,
-.pi-learning-result-copy pre:has(> code.language-html)::after { content: "html"; }
-
-.pi-learning-topic-view pre:has(> code.language-css)::after,
-.pi-learning-plan-view pre:has(> code.language-css)::after,
-.pi-learning-question pre:has(> code.language-css)::after,
-.pi-learning-result-copy pre:has(> code.language-css)::after { content: "css"; }
-
-/* Reset theme-specific pre/code colors so token colors below are deterministic. */
 .pi-learning-topic-view .markdown-reading-view pre code,
 .pi-learning-plan-view .markdown-reading-view pre code,
 .pi-learning-question pre code,
@@ -289,21 +289,14 @@
   color: #e6edf3 !important;
   font-family: inherit !important;
   font-size: inherit !important;
+  font-weight: inherit !important;
   text-shadow: none !important;
 }
 
-/* Explicit Prism token palette — close to the dark code blocks used in ChatGPT. */
 .pi-learning-topic-view pre .token.comment,
 .pi-learning-plan-view pre .token.comment,
 .pi-learning-question pre .token.comment,
-.pi-learning-result-copy pre .token.comment,
-.pi-learning-topic-view pre .token.prolog,
-.pi-learning-plan-view pre .token.prolog,
-.pi-learning-question pre .token.prolog,
-.pi-learning-result-copy pre .token.prolog {
-  color: #8b949e !important;
-  font-style: italic;
-}
+.pi-learning-result-copy pre .token.comment { color: #8b949e !important; font-style: italic; }
 
 .pi-learning-topic-view pre .token.keyword,
 .pi-learning-plan-view pre .token.keyword,
@@ -312,34 +305,22 @@
 .pi-learning-topic-view pre .token.boolean,
 .pi-learning-plan-view pre .token.boolean,
 .pi-learning-question pre .token.boolean,
-.pi-learning-result-copy pre .token.boolean {
-  color: #ff7ab2 !important;
-}
+.pi-learning-result-copy pre .token.boolean { color: #ff7ab2 !important; }
 
 .pi-learning-topic-view pre .token.function,
 .pi-learning-plan-view pre .token.function,
 .pi-learning-question pre .token.function,
-.pi-learning-result-copy pre .token.function {
-  color: #dcdcaa !important;
-}
+.pi-learning-result-copy pre .token.function { color: #dcdcaa !important; }
 
 .pi-learning-topic-view pre .token.string,
 .pi-learning-plan-view pre .token.string,
 .pi-learning-question pre .token.string,
-.pi-learning-result-copy pre .token.string,
-.pi-learning-topic-view pre .token.char,
-.pi-learning-plan-view pre .token.char,
-.pi-learning-question pre .token.char,
-.pi-learning-result-copy pre .token.char {
-  color: #a5d6a7 !important;
-}
+.pi-learning-result-copy pre .token.string { color: #a5d6a7 !important; }
 
 .pi-learning-topic-view pre .token.number,
 .pi-learning-plan-view pre .token.number,
 .pi-learning-question pre .token.number,
-.pi-learning-result-copy pre .token.number {
-  color: #f78c6c !important;
-}
+.pi-learning-result-copy pre .token.number { color: #f78c6c !important; }
 
 .pi-learning-topic-view pre .token.class-name,
 .pi-learning-plan-view pre .token.class-name,
@@ -348,34 +329,17 @@
 .pi-learning-topic-view pre .token.builtin,
 .pi-learning-plan-view pre .token.builtin,
 .pi-learning-question pre .token.builtin,
-.pi-learning-result-copy pre .token.builtin {
-  color: #82aaff !important;
-}
+.pi-learning-result-copy pre .token.builtin { color: #82aaff !important; }
 
 .pi-learning-topic-view pre .token.operator,
 .pi-learning-plan-view pre .token.operator,
 .pi-learning-question pre .token.operator,
-.pi-learning-result-copy pre .token.operator {
-  color: #c9d1d9 !important;
-}
+.pi-learning-result-copy pre .token.operator { color: #c9d1d9 !important; }
 
 .pi-learning-topic-view pre .token.punctuation,
 .pi-learning-plan-view pre .token.punctuation,
 .pi-learning-question pre .token.punctuation,
-.pi-learning-result-copy pre .token.punctuation {
-  color: #b9c0c8 !important;
-}
-
-.pi-learning-topic-view pre .token.variable,
-.pi-learning-plan-view pre .token.variable,
-.pi-learning-question pre .token.variable,
-.pi-learning-result-copy pre .token.variable,
-.pi-learning-topic-view pre .token.parameter,
-.pi-learning-plan-view pre .token.parameter,
-.pi-learning-question pre .token.parameter,
-.pi-learning-result-copy pre .token.parameter {
-  color: #e6edf3 !important;
-}
+.pi-learning-result-copy pre .token.punctuation { color: #b9c0c8 !important; }
 
 /* Answer options */
 .pi-learning-options {
@@ -388,24 +352,25 @@
   display: grid;
   grid-template-columns: 1.7rem 1fr;
   width: 100%;
-  min-height: 3.15rem;
+  min-height: 3.05rem;
   align-items: center;
   gap: 0.78rem;
-  padding: 0.68rem 0.9rem;
+  padding: 0.66rem 0.9rem;
   border: 1px solid var(--pi-border) !important;
   border-radius: 11px;
   outline: none !important;
-  background: var(--pi-option) !important;
+  background: transparent !important;
   color: var(--pi-text) !important;
   box-shadow: none !important;
   text-align: left;
-  font: inherit;
+  font-family: var(--pi-ui-font);
+  font-size: 0.91rem;
+  font-weight: 400;
   cursor: pointer;
-  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
 .pi-learning-option:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--pi-text) 24%, var(--pi-border)) !important;
   background: var(--pi-option-hover) !important;
 }
 
@@ -418,26 +383,23 @@
 .pi-learning-option.is-selected {
   border-color: color-mix(in srgb, var(--pi-text) 48%, var(--pi-border)) !important;
   background: var(--pi-option-selected) !important;
-  box-shadow: none !important;
 }
 
 .pi-learning-option:disabled {
   cursor: default;
 }
 
-/* Letter marker doubles as a quiet radio indicator. */
 .pi-learning-option-index {
   display: grid;
-  width: 1.45rem;
-  height: 1.45rem;
+  width: 1.42rem;
+  height: 1.42rem;
   place-items: center;
   border: 1px solid var(--pi-border);
   border-radius: 999px;
   color: var(--pi-muted);
-  font-size: 0.66rem;
+  font-size: 0.64rem;
   line-height: 1;
-  font-weight: 700;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  font-weight: 600;
 }
 
 .pi-learning-option.is-selected .pi-learning-option-index {
@@ -449,16 +411,13 @@
 .pi-learning-option-text {
   min-width: 0;
   color: var(--pi-text);
-  font-size: 0.9rem;
-  line-height: 1.45;
-  font-weight: 450;
+  font-size: 0.91rem;
+  line-height: 1.5;
+  font-weight: 400;
 }
 
-.pi-learning-option-text p {
-  margin: 0;
-}
+.pi-learning-option-text p { margin: 0; }
 
-/* Submission row */
 .pi-learning-submit-row {
   display: flex;
   align-items: center;
@@ -470,6 +429,7 @@
 .pi-learning-helper {
   color: var(--pi-muted);
   font-size: 0.76rem;
+  font-weight: 400;
 }
 
 .pi-learning-submit {
@@ -482,21 +442,11 @@
   background: var(--pi-button-bg) !important;
   color: var(--pi-button-text) !important;
   box-shadow: none !important;
+  font-family: var(--pi-ui-font);
   font-size: 0.79rem;
   line-height: 1;
-  font-weight: 700;
+  font-weight: 550;
   cursor: pointer;
-  transition: opacity 120ms ease, transform 120ms ease;
-}
-
-.pi-learning-submit:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.pi-learning-submit:focus,
-.pi-learning-submit:focus-visible {
-  outline: none !important;
-  box-shadow: none !important;
 }
 
 .pi-learning-submit:disabled {
@@ -504,33 +454,75 @@
   opacity: 0.34;
 }
 
-/* Results stay neutral and document-like. */
 .pi-learning-result {
   display: none;
-  margin-top: 1.45rem;
-  padding-top: 1.15rem;
+  margin-top: 1.4rem;
+  padding-top: 1.1rem;
   border-top: 1px solid var(--pi-border);
 }
 
-.pi-learning-result.is-visible {
-  display: block;
-}
+.pi-learning-result.is-visible { display: block; }
 
 .pi-learning-result-title {
   margin-bottom: 0.32rem;
   color: var(--pi-text);
   font-size: 0.88rem;
-  font-weight: 700;
+  font-weight: 550;
 }
 
 .pi-learning-result-copy {
   color: var(--pi-muted);
   font-size: 0.84rem;
-  line-height: 1.58;
+  line-height: 1.6;
+  font-weight: 400;
 }
 
-.pi-learning-result-copy p {
-  margin: 0 0 0.65rem;
+.pi-learning-result-copy p { margin: 0 0 0.65rem; }
+
+/* Pager */
+.pi-learning-pager {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--pi-border);
+}
+
+.pi-learning-page-button {
+  appearance: none;
+  width: fit-content;
+  padding: 0.45rem 0;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  color: var(--pi-muted) !important;
+  box-shadow: none !important;
+  font-family: var(--pi-ui-font);
+  font-size: 0.76rem;
+  font-weight: 450;
+  cursor: pointer;
+}
+
+.pi-learning-page-button:hover:not(:disabled) {
+  color: var(--pi-text) !important;
+}
+
+.pi-learning-page-button:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.pi-learning-page-next { justify-self: end; }
+.pi-learning-page-previous { justify-self: start; }
+
+.pi-learning-page-position {
+  color: var(--pi-muted);
+  font-family: var(--pi-ui-font);
+  font-size: 0.74rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Coding exercise */
@@ -539,20 +531,13 @@
   margin-bottom: 0.5rem;
   color: var(--pi-muted);
   font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-weight: 550;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.pi-learning-criteria-wrap {
-  margin: 0 0 1.25rem;
-}
-
-.pi-learning-criteria {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
+.pi-learning-criteria-wrap { margin: 0 0 1.25rem; }
+.pi-learning-criteria { margin: 0; padding: 0; list-style: none; }
 
 .pi-learning-criteria li {
   padding: 0.5rem 0;
@@ -560,27 +545,27 @@
   color: var(--pi-muted);
   font-size: 0.82rem;
   line-height: 1.5;
+  font-weight: 400;
 }
 
 .pi-learning-code-wrap {
   overflow: hidden;
   margin-top: 1.15rem;
-  border: 1px solid #303030;
-  border-radius: 12px;
-  background: #0d0d0d;
+  border: 1px solid var(--pi-code-border);
+  border-radius: 11px;
+  background: var(--pi-code-bg);
 }
 
 .pi-learning-code-label {
   display: flex;
   align-items: center;
-  min-height: 2rem;
+  min-height: 1.95rem;
   padding: 0 0.9rem;
-  border-bottom: 1px solid #292929;
-  background: #171717;
-  color: #a7a7a7;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 0.68rem;
-  font-weight: 500;
+  border-bottom: 1px solid #2b2b2b;
+  color: #858585;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.66rem;
+  font-weight: 400;
   text-transform: lowercase;
 }
 
@@ -589,29 +574,17 @@
   width: 100%;
   min-height: 280px;
   resize: vertical;
-  padding: 1rem 1.05rem 1.2rem;
+  padding: 0.95rem 1rem 1.15rem;
   border: 0 !important;
-  border-radius: 0;
   outline: 0 !important;
-  background: #0d0d0d !important;
-  color: #e6edf3 !important;
+  background: var(--pi-code-bg) !important;
+  color: var(--pi-code-text) !important;
   box-shadow: none !important;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 0.82rem;
-  line-height: 1.65;
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.6;
   tab-size: 4;
-}
-
-.pi-learning-code-editor:focus {
-  box-shadow: inset 0 0 0 1px #3d3d3d !important;
-}
-
-.pi-learning-test-evidence {
-  margin-top: 1rem;
-}
-
-.pi-learning-test-evidence pre {
-  margin: 0;
 }
 
 .pi-learning-error {
@@ -630,26 +603,17 @@
     padding-top: 1.5rem;
   }
 
-  .pi-learning-quiz-view .markdown-reading-view h1 {
-    margin-bottom: 0.9rem !important;
-    font-size: 1.4rem !important;
-  }
-
   .pi-learning-assessment {
-    padding: 1.55rem 1rem 1.75rem;
+    padding: 1.55rem 1rem 1.15rem;
     border-radius: 14px;
   }
 
-  .pi-learning-question {
-    font-size: 1.14rem;
-  }
+  .pi-learning-question { font-size: 1.12rem; }
 
   .pi-learning-submit-row {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .pi-learning-submit {
-    width: 100%;
-  }
+  .pi-learning-submit { width: 100%; }
 }
