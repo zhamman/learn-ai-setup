@@ -1,6 +1,6 @@
 # lesson-log
 
-This extension writes clean, topic-based learning notes for Obsidian instead of mirroring the full Pi chat.
+This extension keeps clean, topic-based learning notes for Obsidian without mirroring the Pi chat.
 
 ## Normal workflow
 
@@ -11,8 +11,10 @@ This extension writes clean, topic-based learning notes for Obsidian instead of 
 /learn python/oop
 ```
 
-3. Start the `teach` skill.
-4. As teaching moves through distinct concepts, Pi calls the `lesson_note` tool automatically.
+3. Start the `lesson-notes` and `teach` skills.
+4. As teaching moves through distinct concepts, Pi calls `lesson_note` automatically.
+5. Pi saves only durable knowledge by explicitly calling `lesson_write`.
+6. Quiz questions/results are logged automatically.
 
 For example, one OOP lesson can produce:
 
@@ -28,9 +30,9 @@ The same topic slug is reused when a concept is revisited, so the same note is e
 
 ## What gets logged
 
-The active topic note receives:
+The active topic note receives only:
 
-- assistant lesson prose
+- curated lesson material explicitly saved with `lesson_write`
 - quiz questions
 - quiz answers
 - quiz explanations
@@ -38,6 +40,7 @@ The active topic note receives:
 It intentionally omits:
 
 - ordinary user chat
+- ordinary assistant chat
 - bash/read/write/edit tool chatter
 - researcher/subagent tool results
 - orchestration noise
@@ -49,20 +52,26 @@ It intentionally omits:
 - `/lesson-stop` — stop topic-note logging.
 - `/lesson-status` — show the current subject and active note.
 
-## Model tool
+## Model tools
 
-`lesson_note({ topic, title? })` is available to Pi. The companion `lesson-notes` skill and the tool's prompt guidance tell the teacher to call it before the first substantive explanation of each distinct concept in the teaching dependency graph.
-
-Example:
-
-```text
-/learn python/oop
-```
-
-Then Pi can call:
+### `lesson_note`
 
 ```text
 lesson_note({ topic: "inheritance" })
 ```
 
-which activates `python/oop/inheritance.md`.
+Creates or activates `python/oop/inheritance.md` when `/learn python/oop` is active.
+
+### `lesson_write`
+
+```text
+lesson_write({
+  content: "Inheritance lets a class derive behavior from a parent class..."
+})
+```
+
+Appends only that curated Markdown to the active topic note.
+
+Ordinary assistant responses are not automatically written. This lets Pi be conversational in the terminal while Obsidian remains a durable knowledge base rather than a filtered transcript.
+
+Quiz content does not need to be sent through `lesson_write`; the extension captures quiz questions and results automatically while a lesson note is active.
