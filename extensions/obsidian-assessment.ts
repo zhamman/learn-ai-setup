@@ -10,6 +10,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { renderProject } from "./lib/mini-project.ts";
 
 type QuizPhase = "diagnostic" | "lesson";
 
@@ -216,6 +217,13 @@ function updateMastery(subjectDir: string, topicSlug: string, correct: boolean, 
 	if (!correct) topic.status = "learning";
 	state.topics[topicSlug] = topic;
 	writeJson(file, state);
+	const track = state.plan?.topic;
+	const project = track ? state.projects?.[track] : undefined;
+	if (project && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(track)) {
+		const projectFile = path.join(subjectDir, "plan", `${track}-project.md`);
+		ensureDir(path.dirname(projectFile));
+		fs.writeFileSync(projectFile, renderProject(project, { steps: state.plan.steps, topics: state.topics }, track), "utf-8");
+	}
 }
 
 function setAssessmentLifecycle(subjectDir: string): void {

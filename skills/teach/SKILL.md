@@ -110,6 +110,8 @@ This is the highest-leverage step; don't rush it. With his level and his goal no
 
 A good plan is what makes the teaching feel inevitable instead of arbitrary.
 
+**For a generated learning plan, create its mini-project immediately.** Follow the `lesson-notes` skill's mini-project reference and pass the scoped specification with `lesson_plan`. It must integrate the plan's concepts, leave design choices to the learner, include failure cases and objective completion criteria, and require no untaught material. Show the full project from day one, with requirements progressively feasible as prerequisites are learned. Project work is optional alongside lessons; do not delay creating it until the course ends. Do not give away the implementation.
+
 **Then present the plan in chat — always, before any teaching.** Two parts:
 
 1. **The approach, in prose.** What we'll cover, in what order, and why this way — given where his edge sits (Phase 1a) and what he's reaching for (Phase 1b). A few freeform sentences.

@@ -7,7 +7,8 @@ The learning system separates human-facing Markdown from machine-facing adaptive
 ```text
 <subject>/
 ├── plan/
-│   └── <track>.md
+│   ├── <track>.md
+│   └── <track>-project.md
 ├── topic/
 │   └── <concept>.md
 └── quiz/
@@ -19,7 +20,7 @@ These files should read like a polished course. They do **not** contain visible 
 
 Topic notes create headings only when useful content exists. There is no prefilled empty template.
 
-Plans stay compact: title/deck, Goal, Starting point, Dependency map, and Path.
+Plans stay compact: title/deck, Goal, Starting point, Dependency map, Path, and a link to the mini-project. The project specification is generated with the plan, visible immediately, and shows prerequisites for each requirement. Project work is optional.
 
 Quiz files contain `learning-quiz` and `learning-code` render blocks. The Pi Learning Obsidian plugin turns those blocks into the interactive UI.
 
@@ -43,7 +44,10 @@ The hidden state is deliberately separate from the notes the learner reads.
 : Starts the overall track and routes the diagnostic assessment.
 
 `lesson_plan`
-: Rewrites the current clean learning roadmap from structured adaptive steps.
+: Writes the roadmap and requires a scoped `miniProject` on first creation. Omit it on normal updates to preserve the spec/review. Projects cover all plan concepts using only mapped plan topics or evidenced prior knowledge; prose still needs the teacher's semantic scope check.
+
+`lesson_project_review`
+: Records inspected learner work and criterion/edge-case evidence, merges partial requirement reviews, and requires design/integration evidence for completion. It never writes learner code or awards lesson mastery.
 
 `lesson_note`
 : Activates/creates a clean concept note and records hidden graph state.
@@ -70,7 +74,9 @@ The hidden state is deliberately separate from the notes the learner reads.
 : Marks a concept learning/blocked/complete. Completion is gated on note quality and assessment evidence.
 
 `lesson_finish`
-: Finishes the track when its hidden path has no unfinished nodes.
+: Finishes the track when its hidden path has no unfinished nodes, reporting optional project completion separately.
+
+Project specifications and reviews are stored per track in hidden `state.json` under `projects`. Existing state remains readable; the next plan update adds a missing project without resetting lessons. Readiness follows mastery, not roadmap labels. See `skills/lesson-notes/references/mini-projects.md` for generation, scope, coaching, and review rules.
 
 ## Required order
 
@@ -107,3 +113,13 @@ bash .pi/scripts/install-obsidian-plugin.sh
 ```
 
 Then enable **Pi Learning** in Obsidian → Settings → Community plugins.
+
+## Project regression checks
+
+With Node 22.18+ (native TypeScript stripping) and `@sinclair/typebox` installed, run from this repository:
+
+```bash
+node --test tests/mini-project.test.mjs
+```
+
+These exercise actual extension tools with a temporary vault: initial generation, legacy migration, scope rejection, mastery-based readiness, failed assessments, partial/final review, resume, and adaptive-plan preservation. Obsidian desktop and live model behavior still need a manual course run.

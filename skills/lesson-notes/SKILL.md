@@ -1,6 +1,6 @@
 ---
 name: lesson-notes
-description: Use Obsidian as the clean learner-facing interface for adaptive plans, lesson notes, conceptual quizzes, and coding exercises. Machine state stays hidden under .learning/.
+description: Use Obsidian as the clean learner-facing interface for adaptive plans, scoped mini-projects, lesson notes, conceptual quizzes, and coding exercises. Machine state stays hidden under .learning/.
 ---
 
 # Lesson Notes
@@ -106,7 +106,7 @@ lesson_start(overall track)
       ↓
 diagnostic in Obsidian
       ↓
-lesson_plan(clean adaptive roadmap)
+lesson_plan(clean adaptive roadmap + mini-project)
       ↓
 present plan and wait for approval
       ↓
@@ -159,6 +159,10 @@ Diagnostic evidence must change the plan.
 
 Write the plan with `lesson_plan` using structured steps.
 
+Generate **one mini-project in that same call**, before teaching begins. Read [references/mini-projects.md](references/mini-projects.md) when creating/updating the plan or coaching/reviewing project work. The project is a required plan artifact; doing it is the learner's choice. Its full spec lives in `plan/<track>-project.md`, linked from the plan, and is visible immediately.
+
+Every required concept must map to a plan step or explicit prior-knowledge evidence. Make it challenging through integration, design decisions, and edge cases, within a small scope. Never add untaught frameworks or solve the design for the learner. Requirements show which lessons must be learned first; the entire specification remains visible.
+
 Example concept path:
 
 ```text
@@ -183,7 +187,7 @@ steps: [
 ]
 ```
 
-Then show the learner the plan and wait for approval before teaching.
+Supply `miniProject` as described in the reference alongside these steps. Then show the learner the plan and project link and wait for approval before teaching.
 
 ## Teach a concept in Obsidian first
 
@@ -351,7 +355,7 @@ Completion should fail when:
 - the latest assessment is incorrect
 - `requiresCode` is true but no successful coding exercise exists
 
-After a concept is completed, update `lesson_plan` so the visible **Path** shows the new current/next nodes without exposing machine statistics.
+After a concept is completed, update `lesson_plan` so the visible **Path** shows the new current/next nodes without exposing machine statistics. Omit `miniProject` on ordinary updates to preserve the existing specification and review. Readiness refreshes after mastery changes. If an adaptive plan introduces/removes concepts, reconcile project scope in the same update; never quietly replace a reviewed project or overwrite learner implementation files.
 
 ## Core rule
 

@@ -15,6 +15,8 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { validateProject, validateReview, renderProject, projectStatus } from "./lib/mini-project.ts";
+import type { ProjectSpec, ProjectState, ProjectReview } from "./lib/mini-project.ts";
 
 type QuizPhase = "diagnostic" | "lesson";
 type LifecyclePhase = "idle" | "diagnostic" | "planning" | "teaching" | "assessment" | "finished";
@@ -66,10 +68,12 @@ type HiddenState = {
 		diagnosticFile: string;
 	};
 	plan?: {
+		topic?: string;
 		steps: PlanStep[];
 		currentPosition: string;
 		next: string;
 	};
+	projects?: Record<string, ProjectState>;
 	topics: Record<string, TopicState>;
 };
 
@@ -90,6 +94,23 @@ type SessionState = {
 const LessonStartParams = Type.Object({
 	topic: Type.String({ description: "Stable slug for the overall learning track." }),
 	title: Type.Optional(Type.String({ description: "Optional readable title." })),
+});
+
+const ProjectSpecParams = Type.Object({
+	title: Type.String(),
+	brief: Type.String({ description: "Small integration challenge, specified as behavior, without solution steps." }),
+	estimatedHours: Type.Number({ minimum: 1, maximum: 8 }),
+	priorKnowledge: Type.Array(Type.Object({ topic: Type.String(), title: Type.String(), evidence: Type.String() })),
+	tools: Type.Array(Type.Object({ name: Type.String(), concept: Type.String() }), { description: "Every required framework/library/tool mapped to its taught or prior-known concept; empty if none." }),
+	requirements: Type.Array(Type.Object({
+		id: Type.String(), behavior: Type.String(),
+		concepts: Type.Array(Type.String(), { minItems: 1 }),
+		criteria: Type.Array(Type.String(), { minItems: 1 }),
+		edgeCases: Type.Array(Type.String(), { minItems: 1 }),
+	}), { minItems: 1, maxItems: 6 }),
+	designQuestions: Type.Array(Type.String(), { minItems: 2 }),
+	definitionOfDone: Type.Array(Type.String(), { minItems: 1 }),
+	nonGoals: Type.Array(Type.String(), { minItems: 1 }),
 });
 
 const LessonPlanParams = Type.Object({
@@ -116,6 +137,8 @@ const LessonPlanParams = Type.Object({
 	),
 	currentPosition: Type.String({ description: "Hidden lifecycle state for the current position." }),
 	next: Type.String({ description: "Hidden lifecycle state for what comes next." }),
+	miniProject: Type.Optional(ProjectSpecParams),
+	reviseProject: Type.Optional(Type.Boolean({ description: "Explicitly revise a reviewed project after discussing scope changes with the learner. Invalidates the prior review, never edits learner code." })),
 });
 
 const LessonNoteParams = Type.Object({
@@ -296,6 +319,16 @@ export default function lessonLog(pi: ExtensionAPI) {
 		fs.renameSync(temp, file);
 	}
 
+	function refreshProject(state: HiddenState): string | null {
+		const slug = state.plan?.topic;
+		const project = slug ? state.projects?.[slug] : undefined;
+		if (!subjectDir || !slug || !project || !state.plan) return null;
+		const file = path.join(subjectDir, "plan", `${slug}-project.md`);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, renderProject(project, { steps: state.plan.steps, topics: state.topics }, slug), "utf-8");
+		return file;
+	}
+
 	function persistSession(): void {
 		pi.appendEntry("lesson-log", {
 			subjectDir,
@@ -386,7 +419,7 @@ export default function lessonLog(pi: ExtensionAPI) {
 	function evaluateVisibleNote(file: string): { ready: boolean; reasons: string[]; headings: number; words: number } {
 		const text = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
 		const headings = (text.match(/^##\s+.+$/gm) || []).length;
-		const emptyHeading = /^##\s+.+\n\s*(?=##\s+|$)/m.test(text);
+		const emptyHeading = text.split(/^##[ \t]+[^\n]+(?:\n|$)/gm).slice(1).some(section => !section.trim());
 		const body = text.replace(/^#+\s+.*$/gm, " ").replace(/```[\s\S]*?```/g, " code ").trim();
 		const words = body.split(/\s+/).filter(Boolean).length;
 		const reasons: string[] = [];
@@ -484,14 +517,15 @@ export default function lessonLog(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "lesson_plan",
 		label: "lesson plan",
-		description: "Write a compact clean learning roadmap. Adaptive status stays hidden; the visible plan only shows useful learning information.",
-		promptSnippet: "After the diagnostic, write the clean plan and present it for learner approval before teaching.",
+		description: "Write a learning roadmap and its immediately visible mini-project. miniProject is required on first creation (including old plans missing one); omit on updates to preserve it. All project concepts/tools must be within the curriculum or evidenced prior knowledge.",
+		promptSnippet: "After the diagnostic, generate the plan AND a small behavioral integration project, then present both for learner approval. Audit prose for hidden prerequisites and solution leakage.",
 		parameters: LessonPlanParams,
 		async execute(_id, params) {
 			if (!subjectDir) return { content: [{ type: "text", text: "Run /learn first." }], details: { status: "no-subject" } };
 			const slug = slugify(params.topic);
 			const file = planPath(slug);
 			if (!slug || !file) return { content: [{ type: "text", text: "Invalid plan topic." }], details: { status: "invalid-topic" } };
+			if (trackSlug && trackSlug !== slug) return { content: [{ type: "text", text: "Use lesson_start to switch tracks before replacing its plan." }], details: { status: "track-mismatch" } };
 			const title = params.title?.trim() || trackTitle || titleFromSlug(slug);
 			const steps: PlanStep[] = params.steps.map((step: any) => ({
 				topic: slugify(step.topic),
@@ -499,18 +533,61 @@ export default function lessonLog(pi: ExtensionAPI) {
 				description: step.description ? String(step.description).trim() : undefined,
 				state: step.state as StepState,
 			})).filter((step: PlanStep) => step.topic && step.title);
+			const state = readHiddenState();
+			const previous = state.projects?.[slug];
+			const spec = (params.miniProject || previous?.spec) as ProjectSpec | undefined;
+			if (!spec) return { content: [{ type: "text", text: "Include miniProject with the initial plan. The project must be available before teaching starts." }], details: { status: "project-required" } };
+			const errors = validateProject(spec, steps);
+			if (errors.length) return { content: [{ type: "text", text: errors.join("\n") }], details: { status: "project-invalid", errors } };
+			const changed = previous && JSON.stringify(previous.spec) !== JSON.stringify(spec);
+			if (changed && previous.review && params.reviseProject !== true) return { content: [{ type: "text", text: "This project has reviewed work. Discuss the scope revision, then use reviseProject to replace the specification and invalidate its review. Learner code is preserved." }], details: { status: "project-revision-required" } };
+			state.projects ||= {};
+			state.projects[slug] = previous && !changed ? previous : { spec };
+			state.plan = { topic: slug, steps, currentPosition: params.currentPosition.trim(), next: params.next.trim() };
+			const projectFile = refreshProject(state);
 			fs.mkdirSync(path.dirname(file), { recursive: true });
-			fs.writeFileSync(file, renderPlan(title, params.summary, params.goal, params.startingPoint, params.dependencyMap, steps), "utf-8");
+			const projectLink = `\n## Mini-project\n\n[${spec.title}](${slug}-project.md) — ${spec.estimatedHours} focused hours. Full specification available now; requirements become ready as you learn. Start whenever you choose.\n`;
+			fs.writeFileSync(file, renderPlan(title, params.summary, params.goal, params.startingPoint, params.dependencyMap, steps) + projectLink, "utf-8");
 			planFile = file;
 			trackSlug = trackSlug || slug;
 			trackTitle = trackTitle || title;
 			lifecycle = "planning";
-			const state = readHiddenState();
-			state.plan = { steps, currentPosition: params.currentPosition.trim(), next: params.next.trim() };
 			if (state.track) state.track.lifecycle = lifecycle;
 			writeHiddenState(state);
 			persistSession();
-			return { content: [{ type: "text", text: `Updated clean learning plan: ${file}` }], details: { status: "written", file } };
+			return { content: [{ type: "text", text: `Updated learning plan: ${file}\nMini-project available now: ${projectFile}` }], details: { status: "written", file, projectFile } };
+		},
+	});
+
+	pi.registerTool({
+		name: "lesson_project_review",
+		label: "project review",
+		description: "Record evidence from inspected learner project work. Partial reviews merge by requirement; revisions replace that requirement's prior evidence. Does not award lesson mastery. Challenge design reasoning, criteria, edge cases and definition of done; never invent execution evidence.",
+		parameters: Type.Object({
+			work: Type.Array(Type.String(), { minItems: 1, description: "Exact learner files or submission references inspected." }),
+			requirements: Type.Array(Type.Object({ requirementId: Type.String(), passed: Type.Boolean(), evidence: Type.String() }), { minItems: 1 }),
+			designEvidence: Type.String({ description: "Observed learner reasoning for design decisions; empty until reviewed." }),
+			doneEvidence: Type.String({ description: "Observed evidence for ALL definition-of-done conditions; empty until verified." }),
+			feedback: Type.String(),
+		}),
+		async execute(_id, params) {
+			if (!subjectDir) return { content: [{ type: "text", text: "Run /learn first." }], details: { status: "no-subject" } };
+			const state = readHiddenState();
+			const slug = state.plan?.topic;
+			const project = slug ? state.projects?.[slug] : undefined;
+			if (!project || !state.plan || slug !== trackSlug) return { content: [{ type: "text", text: "Generate the active track's mini-project with lesson_plan first." }], details: { status: "no-project" } };
+			const context = { steps: state.plan.steps, topics: state.topics };
+			const errors = validateReview(params as ProjectReview, project, context);
+			const merged = new Map(project.review?.requirements.map(item => [item.requirementId, item]) || []);
+			for (const item of params.requirements) merged.set(item.requirementId, item);
+			const review: ProjectReview = { ...params, work: [...new Set([...(project.review?.work || []), ...params.work])], requirements: [...merged.values()] };
+			errors.push(...validateReview(review, project, context));
+			if (errors.length) return { content: [{ type: "text", text: [...new Set(errors)].join("\n") }], details: { status: "review-blocked", errors } };
+			project.review = review;
+			writeHiddenState(state);
+			const file = refreshProject(state);
+			const status = projectStatus(project, context);
+			return { content: [{ type: "text", text: `Project: ${status}. Review saved in ${file}.` }], details: { status, file } };
 		},
 	});
 
@@ -589,6 +666,7 @@ export default function lessonLog(pi: ExtensionAPI) {
 			else topic.misconceptions.push(item);
 			if (!item.resolved) topic.status = "learning";
 			writeHiddenState(state);
+			refreshProject(state);
 			return { content: [{ type: "text", text: `${item.resolved ? "Resolved" : "Recorded"} misconception for ${slug} in hidden learning state.` }], details: { status: item.resolved ? "resolved" : "recorded", topic: slug } };
 		},
 	});
@@ -640,11 +718,13 @@ export default function lessonLog(pi: ExtensionAPI) {
 				if (blockers.length) {
 					topic.status = "learning";
 					writeHiddenState(state);
+					refreshProject(state);
 					return { content: [{ type: "text", text: `Cannot complete ${lessonSlug}: ${blockers.join("; ")}.` }], details: { status: "completion-blocked", blockers } };
 				}
 			}
 			topic.status = params.status as TopicStatus;
 			writeHiddenState(state);
+			refreshProject(state);
 			return { content: [{ type: "text", text: `Concept ${lessonSlug} is now ${params.status}${params.reason ? ` — ${params.reason}` : ""}. Update the clean plan if the path changed.` }], details: { status: params.status, topic: lessonSlug } };
 		},
 	});
@@ -665,7 +745,10 @@ export default function lessonLog(pi: ExtensionAPI) {
 			if (state.track) state.track.lifecycle = lifecycle;
 			writeHiddenState(state);
 			persistSession();
-			return { content: [{ type: "text", text: `Finished learning track ${trackTitle || trackSlug || ""}.` }], details: { status: "finished" } };
+			const project = state.plan?.topic ? state.projects?.[state.plan.topic] : undefined;
+			const status = project && state.plan ? projectStatus(project, { steps: state.plan.steps, topics: state.topics }) : "Not generated";
+			refreshProject(state);
+			return { content: [{ type: "text", text: `Finished learning track ${trackTitle || trackSlug || ""}. Mini-project: ${status}; project work is optional and remains available.` }], details: { status: "finished", projectStatus: status } };
 		},
 	});
 }
