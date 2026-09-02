@@ -10,17 +10,20 @@
  *   - ordinary user chat
  *   - bash/read/write/edit chatter
  *   - researcher/subagent chatter
- *   - orchestration details
+ *   - orchestration tool results
  *
- * Commands:
+ * Human commands:
  *   /learn <dir>          Set the subject directory relative to cwd.
- *   /lesson <slug>        Start/switch the active lesson note.
+ *   /lesson <slug>        Manually start/switch a lesson note (escape hatch).
  *   /lesson-stop          Stop writing lesson notes.
  *   /lesson-status        Show current subject + lesson.
  *
+ * Model tool:
+ *   lesson_note({ topic }) — automatically start/switch notes at semantic topic boundaries.
+ *
  * Example:
  *   /learn python/oop
- *   /lesson inheritance
+ *   model calls lesson_note({ topic: "inheritance" })
  *
  * writes to:
  *   <cwd>/python/oop/inheritance.md
@@ -30,10 +33,24 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 const QA_TOOLS = new Set(["quiz"]);
+
+const LessonNoteParams = Type.Object({
+	topic: Type.String({
+		description:
+			"Stable short topic slug for the distinct concept being taught, e.g. 'inheritance', 'self', 'agent-harness', or 'transaction-isolation'. Reuse the same slug when revisiting the same concept.",
+	}),
+	title: Type.Optional(
+		Type.String({
+			description:
+			"Optional human-readable note title. Defaults to title-casing the topic slug. Use only when the natural title cannot be derived cleanly from the slug.",
+		}),
+	),
+});
 
 function slugify(input: string): string {
 	return input
@@ -85,35 +102,34 @@ export default function lessonLog(pi: ExtensionAPI) {
 		fs.writeFileSync(lessonFile, current + prefix + text.trim() + "\n", "utf-8");
 	}
 
-	function ensureLessonFile(ctx: any, slugInput: string): string | null {
+	function activateLesson(ctx: any, topicInput: string, titleInput?: string): { file: string; slug: string; created: boolean } | null {
 		if (!subjectDir) {
-			ctx.ui.notify("Set a learning directory first with /learn <dir>", "warning");
 			return null;
 		}
 
-		const slug = slugify(slugInput);
-		if (!slug) {
-			ctx.ui.notify("Usage: /lesson <topic-slug>", "warning");
-			return null;
-		}
+		const slug = slugify(topicInput);
+		if (!slug) return null;
 
 		const file = path.join(subjectDir, `${slug}.md`);
 		fs.mkdirSync(path.dirname(file), { recursive: true });
-		if (!fs.existsSync(file)) {
-			fs.writeFileSync(file, `# ${titleFromSlug(slug)}\n`, "utf-8");
+		const created = !fs.existsSync(file);
+		if (created) {
+			const title = titleInput?.trim() || titleFromSlug(slug);
+			fs.writeFileSync(file, `# ${title}\n`, "utf-8");
 		}
 
 		lessonSlug = slug;
 		lessonFile = file;
 		pi.appendEntry("lesson-log", { subjectDir, lessonFile, lessonSlug });
 
-		const theme = ctx.ui.theme;
-		ctx.ui.setStatus(
-			"lesson-log",
-			theme.fg("accent", "📘 ") + theme.fg("dim", path.basename(file)),
-		);
-		ctx.ui.notify(`Lesson note: ${file}`, "success");
-		return file;
+		if (ctx?.ui) {
+			const theme = ctx.ui.theme;
+			ctx.ui.setStatus(
+				"lesson-log",
+				theme.fg("accent", "📘 ") + theme.fg("dim", path.basename(file)),
+			);
+		}
+		return { file, slug, created };
 	}
 
 	pi.on("session_start", async (_event, ctx: any) => {
@@ -155,9 +171,18 @@ export default function lessonLog(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("lesson", {
-		description: "Start or switch to a topic-based lesson note",
+		description: "Manually start or switch to a topic-based lesson note",
 		handler: async (args, ctx: any) => {
-			ensureLessonFile(ctx, args.trim());
+			if (!subjectDir) {
+				ctx.ui.notify("Set a learning directory first with /learn <dir>", "warning");
+				return;
+			}
+			const result = activateLesson(ctx, args.trim());
+			if (!result) {
+				ctx.ui.notify("Usage: /lesson <topic-slug>", "warning");
+				return;
+			}
+			ctx.ui.notify(`Lesson note: ${result.file}`, "success");
 		},
 	});
 
@@ -182,6 +207,62 @@ export default function lessonLog(pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerTool({
+		name: "lesson_note",
+		label: "lesson note",
+		description:
+			"Switch the active Obsidian learning note to the distinct concept you are about to teach. The human sets the subject directory once with /learn; you call this tool automatically at semantic topic boundaries. The note is created if missing and reused if it already exists. Do NOT call it for every message, clarification, quiz, example, or researcher lookup. Call it when the knowledge graph moves to a genuinely distinct concept that deserves its own durable note.",
+		promptSnippet:
+			"When teaching and a /learn directory is configured, call lesson_note BEFORE the first substantive explanation of each distinct concept so lesson prose and quizzes land in the correct topic Markdown file.",
+		promptGuidelines: [
+			"The user controls the subject directory with /learn <dir>. Never silently choose or change the subject directory yourself.",
+			"Before teaching the first distinct concept after the plan is approved, call lesson_note with a short stable topic slug.",
+			"When moving to the next distinct concept/node in the teaching dependency graph, call lesson_note before explaining that new concept.",
+			"Reuse the SAME topic slug when revisiting a concept. Do not create topic-2, topic-part-2, or date-based duplicates.",
+			"Do not switch notes for clarifications, examples, quizzes, retries, researcher calls, or stylistic changes if the underlying concept is unchanged.",
+			"Choose concept-sized notes: 'inheritance', 'self', 'agent-harness', 'transaction-isolation'. Avoid huge subject slugs like 'python' and tiny conversational slugs like 'example-1'.",
+			"Once a lesson note is active, write teaching prose so it remains useful when read later without the surrounding chat. Avoid conversational filler and process commentary in lesson prose.",
+		],
+		parameters: LessonNoteParams,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			if (!subjectDir) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "No learning directory is configured. Ask the user to run /learn <subject-directory> once, then retry lesson_note.",
+						},
+					],
+					details: { status: "no-subject" },
+				};
+			}
+
+			const result = activateLesson(ctx, params.topic, params.title);
+			if (!result) {
+				return {
+					content: [{ type: "text", text: "Invalid lesson topic. Use a short non-empty concept slug." }],
+					details: { status: "invalid-topic" },
+				};
+			}
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: `${result.created ? "Created" : "Activated"} lesson note: ${result.file}`,
+					},
+				],
+				details: {
+					status: "active",
+					file: result.file,
+					topic: result.slug,
+					created: result.created,
+				},
+			};
+		},
+	});
+
 	// Only assistant prose is mirrored. User messages are intentionally omitted.
 	pi.on("message_end", async (event, _ctx) => {
 		if (!lessonFile) return;
@@ -195,7 +276,7 @@ export default function lessonLog(pi: ExtensionAPI) {
 		await withLock(() => append(textParts.join("\n\n")));
 	});
 
-	// quiz questions are logged from the post-shuffle update so Obsidian matches
+	// Quiz questions are logged from the post-shuffle update so Obsidian matches
 	// exactly what the learner saw in the terminal.
 	const loggedQuizQuestion = new Set<string>();
 	pi.on("tool_execution_update", async (event, _ctx) => {
