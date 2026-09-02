@@ -87,8 +87,6 @@ module.exports = class PiLearningPlugin extends Plugin {
 
   normalizeAssessmentMarkdown(value) {
     let text = String(value || "").trim();
-    // Repair compact fenced code emitted inside JSON strings, e.g.
-    // "Consider: ```python x = 1 ``` What happens?"
     text = text.replace(/```([A-Za-z0-9_+#.-]+)\s+([\s\S]*?)\s+```/g, (_m, lang, code) => {
       return `\n\n\`\`\`${lang}\n${String(code).trim()}\n\`\`\`\n\n`;
     });
@@ -185,6 +183,76 @@ module.exports = class PiLearningPlugin extends Plugin {
     }
   }
 
+  assessmentSlotFor(el) {
+    return el.closest(".el-pre") || el;
+  }
+
+  attachPager(el, shell, payload, ctx, kind) {
+    const slot = this.assessmentSlotFor(el);
+    slot.classList.add("pi-learning-page-slot");
+    slot.dataset.piLearningAssessment = String(payload.id || "");
+    slot.dataset.piLearningKind = kind;
+
+    const pager = shell.createDiv({ cls: "pi-learning-pager" });
+    const previous = pager.createEl("button", {
+      cls: "pi-learning-page-button pi-learning-page-previous",
+      text: "Previous",
+      attr: { type: "button" },
+    });
+    const position = pager.createDiv({ cls: "pi-learning-page-position", text: "1 / 1" });
+    const next = pager.createEl("button", {
+      cls: "pi-learning-page-button pi-learning-page-next",
+      text: "Next",
+      attr: { type: "button" },
+    });
+
+    slot._piLearningPager = { previous, next, position };
+    window.setTimeout(() => this.refreshPagination(slot), 0);
+    window.setTimeout(() => this.refreshPagination(slot), 80);
+  }
+
+  refreshPagination(slot) {
+    const root = slot.closest(".markdown-preview-sizer") || slot.parentElement;
+    if (!root) return;
+
+    const slots = Array.from(root.querySelectorAll(".pi-learning-page-slot"));
+    if (!slots.length) return;
+
+    const previousCount = Number(root.dataset.piLearningPageCount || "0");
+    let current = Number(root.dataset.piLearningPageIndex);
+    if (!Number.isInteger(current) || current < 0) current = slots.length - 1;
+
+    // If Pi appends a new assessment while the learner is on the newest page,
+    // advance automatically so the new question replaces the old one.
+    if (slots.length > previousCount && previousCount > 0 && current === previousCount - 1) {
+      current = slots.length - 1;
+    }
+
+    current = Math.max(0, Math.min(current, slots.length - 1));
+    root.dataset.piLearningPageCount = String(slots.length);
+    root.dataset.piLearningPageIndex = String(current);
+
+    const showPage = (index) => {
+      const bounded = Math.max(0, Math.min(index, slots.length - 1));
+      root.dataset.piLearningPageIndex = String(bounded);
+      slots.forEach((pageSlot, pageIndex) => {
+        const active = pageIndex === bounded;
+        pageSlot.classList.toggle("is-active-page", active);
+        pageSlot.style.display = active ? "" : "none";
+
+        const controls = pageSlot._piLearningPager;
+        if (!controls) return;
+        controls.position.textContent = `${pageIndex + 1} / ${slots.length}`;
+        controls.previous.disabled = pageIndex === 0;
+        controls.next.disabled = pageIndex === slots.length - 1;
+        controls.previous.onclick = () => showPage(pageIndex - 1);
+        controls.next.onclick = () => showPage(pageIndex + 1);
+      });
+    };
+
+    showPage(current);
+  }
+
   async renderQuiz(source, el, ctx) {
     const payload = this.parsePayload(source, el);
     if (!payload) return;
@@ -268,6 +336,7 @@ module.exports = class PiLearningPlugin extends Plugin {
 
     const existing = await this.readResult(subjectRoot, payload.id);
     if (existing) await applyResult(existing);
+    this.attachPager(el, shell, payload, ctx, "quiz");
     ctx.addChild(new ResultWatcher(el, this, subjectRoot, payload.id, (result) => void applyResult(result)));
   }
 
@@ -353,6 +422,7 @@ module.exports = class PiLearningPlugin extends Plugin {
 
     const existing = await this.readResult(subjectRoot, payload.id);
     if (existing) await applyResult(existing);
+    this.attachPager(el, shell, payload, ctx, "code");
     ctx.addChild(new ResultWatcher(el, this, subjectRoot, payload.id, (result) => void applyResult(result)));
   }
 };
