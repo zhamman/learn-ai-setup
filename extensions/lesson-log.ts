@@ -1,11 +1,13 @@
 /**
- * lesson-log — keep clean topic notes and quiz history separate for Obsidian.
+ * lesson-log — keep learning plans, clean topic notes, and quiz history separate for Obsidian.
  *
  * Subject layout:
+ *   <subject>/plan/<lesson>.md
  *   <subject>/topic/<concept>.md
  *   <subject>/quiz/<lesson>-diagnostic.md
  *   <subject>/quiz/<concept>-lesson.md
  *
+ * Plans are maintained through `lesson_plan`.
  * Durable lesson prose is written only through `lesson_write`.
  * Quiz questions/results are captured automatically into the active quiz file.
  */
@@ -26,12 +28,31 @@ type PendingQuiz = {
 
 type LessonState = {
 	subjectDir?: string | null;
+	planFile?: string | null;
+	planSlug?: string | null;
 	lessonFile?: string | null;
 	lessonSlug?: string | null;
 	quizFile?: string | null;
 	quizSlug?: string | null;
 	quizPhase?: QuizPhase | null;
 };
+
+const LessonPlanParams = Type.Object({
+	topic: Type.String({
+		description:
+			"Stable slug for the overall learning track, e.g. 'context-engineering', 'python-oop', or 'database-transactions'. Reuse the same slug whenever updating the same plan.",
+	}),
+	title: Type.Optional(
+		Type.String({
+			description:
+			"Optional human-readable plan title. Defaults to title-casing the topic slug. Do not include 'Learning Plan'; the extension adds that suffix.",
+		}),
+	),
+	content: Type.String({
+		description:
+			"The complete current plan body as standalone Markdown. Include the goal, diagnostic-informed starting point, dependency map/sequence, progress, current position, and next step. This replaces the previous body so the file remains a current plan rather than an append-only history.",
+	}),
+});
 
 const LessonNoteParams = Type.Object({
 	topic: Type.String({
@@ -152,6 +173,8 @@ function buildQuizResultBlock(details: any): string {
 
 export default function lessonLog(pi: ExtensionAPI) {
 	let subjectDir: string | null = null;
+	let planFile: string | null = null;
+	let planSlug: string | null = null;
 	let lessonFile: string | null = null;
 	let lessonSlug: string | null = null;
 	let quizFile: string | null = null;
@@ -173,6 +196,8 @@ export default function lessonLog(pi: ExtensionAPI) {
 	function persistState(): void {
 		pi.appendEntry("lesson-log", {
 			subjectDir,
+			planFile,
+			planSlug,
 			lessonFile,
 			lessonSlug,
 			quizFile,
@@ -192,6 +217,11 @@ export default function lessonLog(pi: ExtensionAPI) {
 		}
 		const prefix = current.trim().length > 0 ? "\n\n" : "";
 		fs.writeFileSync(file, current + prefix + trimmed + "\n", "utf-8");
+	}
+
+	function planPath(slug: string): string | null {
+		if (!subjectDir) return null;
+		return path.join(subjectDir, "plan", `${slug}.md`);
 	}
 
 	function topicPath(slug: string): string | null {
@@ -214,6 +244,24 @@ export default function lessonLog(pi: ExtensionAPI) {
 		quizSlug = slug;
 		quizPhase = phase;
 		quizFile = file;
+		return { file, slug };
+	}
+
+	function writePlan(topicInput: string, titleInput: string | undefined, content: string): { file: string; slug: string } | null {
+		if (!subjectDir) return null;
+		const slug = slugify(topicInput);
+		if (!slug) return null;
+		const file = planPath(slug);
+		if (!file) return null;
+
+		const body = content.trim();
+		if (!body) return null;
+
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		const title = titleInput?.trim() || titleFromSlug(slug);
+		fs.writeFileSync(file, `# ${title} — Learning Plan\n\n${body}\n`, "utf-8");
+		planSlug = slug;
+		planFile = file;
 		return { file, slug };
 	}
 
@@ -298,8 +346,18 @@ export default function lessonLog(pi: ExtensionAPI) {
 
 		if (!last?.subjectDir) return;
 		subjectDir = last.subjectDir;
+		fs.mkdirSync(path.join(subjectDir, "plan"), { recursive: true });
 		fs.mkdirSync(path.join(subjectDir, "topic"), { recursive: true });
 		fs.mkdirSync(path.join(subjectDir, "quiz"), { recursive: true });
+
+		if (last.planSlug) {
+			const slug = slugify(last.planSlug);
+			const file = planPath(slug);
+			if (file && fs.existsSync(file)) {
+				planSlug = slug;
+				planFile = file;
+			}
+		}
 
 		if (last.lessonSlug) {
 			const slug = slugify(last.lessonSlug);
@@ -326,7 +384,7 @@ export default function lessonLog(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("learn", {
-		description: "Set the learning subject directory; creates topic/ and quiz/ beneath it",
+		description: "Set the learning subject directory; creates plan/, topic/, and quiz/ beneath it",
 		handler: async (args, ctx: any) => {
 			const raw = args.trim();
 			if (!raw) {
@@ -335,10 +393,13 @@ export default function lessonLog(pi: ExtensionAPI) {
 			}
 
 			const resolved = path.isAbsolute(raw) ? raw : path.resolve(ctx.cwd, raw);
+			fs.mkdirSync(path.join(resolved, "plan"), { recursive: true });
 			fs.mkdirSync(path.join(resolved, "topic"), { recursive: true });
 			fs.mkdirSync(path.join(resolved, "quiz"), { recursive: true });
 
 			subjectDir = resolved;
+			planFile = null;
+			planSlug = null;
 			lessonFile = null;
 			lessonSlug = null;
 			quizFile = null;
@@ -348,7 +409,10 @@ export default function lessonLog(pi: ExtensionAPI) {
 			persistState();
 
 			ctx.ui.setStatus("lesson-log", undefined);
-			ctx.ui.notify(`Learning directory: ${resolved}\nTopics: ${path.join(resolved, "topic")}\nQuizzes: ${path.join(resolved, "quiz")}`, "success");
+			ctx.ui.notify(
+				`Learning directory: ${resolved}\nPlans: ${path.join(resolved, "plan")}\nTopics: ${path.join(resolved, "topic")}\nQuizzes: ${path.join(resolved, "quiz")}`,
+				"success",
+			);
 		},
 	});
 
@@ -386,10 +450,10 @@ export default function lessonLog(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("lesson-status", {
-		description: "Show current learning directory, concept note, and quiz target",
+		description: "Show current learning directory, plan, concept note, and quiz target",
 		handler: async (_args, ctx: any) => {
 			ctx.ui.notify(
-				`Learning directory: ${subjectDir ?? "(not set)"}\nTopic note: ${lessonFile ?? "(not active)"}\nQuiz file: ${quizFile ?? "(not active)"}`,
+				`Learning directory: ${subjectDir ?? "(not set)"}\nPlan: ${planFile ?? "(not active)"}\nTopic note: ${lessonFile ?? "(not active)"}\nQuiz file: ${quizFile ?? "(not active)"}`,
 				"info",
 			);
 		},
@@ -431,6 +495,47 @@ export default function lessonLog(pi: ExtensionAPI) {
 			return {
 				content: [{ type: "text", text: `Quiz context set: ${result.file}` }],
 				details: { status: "active", file: result.file, topic: result.slug, phase },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "lesson_plan",
+		label: "lesson plan",
+		description:
+			"Create or replace the current overall learning plan under <subject>/plan/<topic>.md. Use the overall requested lesson slug, normally the same slug used for the opening diagnostic. The content must be the COMPLETE current plan body, not a patch or transcript. Call this after the diagnostic when the dependency map is formed, and update it as meaningful progress changes the current position or next step.",
+		promptSnippet:
+			"After the diagnostic/probe and dependency planning, call lesson_plan with the overall lesson slug and the complete current plan. Keep the plan current as concepts are completed or the learner changes direction.",
+		promptGuidelines: [
+			"Use the same overall slug as the diagnostic when they describe the same learning track.",
+			"Include a concise goal, diagnostic-informed starting point, dependency map or sequence, progress checklist, current position, and next step.",
+			"The content parameter is the COMPLETE latest plan body. lesson_plan replaces the previous file body instead of appending.",
+			"When updating an existing plan, preserve still-valid information and change only what progress or new evidence requires.",
+			"Update the plan after meaningful milestones such as finishing a concept, changing the learning sequence, or discovering a prerequisite gap. Do not rewrite it for every chat turn.",
+			"Do not put full lesson explanations or quiz transcripts in the plan; link or name concepts instead.",
+		],
+		parameters: LessonPlanParams,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			if (!subjectDir) {
+				return {
+					content: [{ type: "text", text: "No learning directory is configured. Ask the user to run /learn <subject-directory> first." }],
+					details: { status: "no-subject" },
+				};
+			}
+
+			const result = writePlan(params.topic, params.title, params.content);
+			if (!result) {
+				return {
+					content: [{ type: "text", text: "Invalid lesson plan. Use a non-empty stable topic slug and non-empty complete plan content." }],
+					details: { status: "invalid-plan" },
+				};
+			}
+
+			persistState();
+			return {
+				content: [{ type: "text", text: `Saved current learning plan: ${result.file}` }],
+				details: { status: "written", file: result.file, topic: result.slug },
 			};
 		},
 	});
