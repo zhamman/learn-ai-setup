@@ -182,14 +182,18 @@ module.exports = class PiLearningPlugin extends Plugin {
     });
     const resultEl = this.createResultArea(shell);
 
-    const setSelected = (index) => {
-      if (completed) return;
+    const paintSelection = (index) => {
       selectedIndex = index;
       optionButtons.forEach((button, buttonIndex) => {
         const selected = buttonIndex + 1 === index;
-        button.toggleClass("is-selected", selected);
+        button.classList.toggle("is-selected", selected);
         button.setAttribute("aria-pressed", selected ? "true" : "false");
       });
+    };
+
+    const setSelected = (index) => {
+      if (completed) return;
+      paintSelection(index);
       submit.removeAttribute("disabled");
     };
 
@@ -208,7 +212,7 @@ module.exports = class PiLearningPlugin extends Plugin {
     submit.addEventListener("click", async () => {
       if (!selectedIndex || completed) return;
       submit.setAttribute("disabled", "true");
-      submit.setText("Submitting…");
+      submit.textContent = "Submitting…";
       try {
         await this.writeSubmission(subjectRoot, {
           assessmentId: payload.id,
@@ -216,20 +220,20 @@ module.exports = class PiLearningPlugin extends Plugin {
           selectedIndex,
           submittedAt: new Date().toISOString(),
         });
-        submit.setText("Submitted");
+        submit.textContent = "Submitted";
       } catch (error) {
         console.error("Pi Learning: quiz submission failed", error);
         submit.removeAttribute("disabled");
-        submit.setText("Submit answer");
+        submit.textContent = "Submit answer";
         new Notice("Pi Learning could not submit this answer.");
       }
     });
 
     const applyResult = (result) => {
+      if (Number.isInteger(result.selectedIndex)) paintSelection(Number(result.selectedIndex));
       completed = true;
       submit.setAttribute("disabled", "true");
-      submit.setText("Submitted");
-      if (Number.isInteger(result.selectedIndex)) setSelected(Number(result.selectedIndex));
+      submit.textContent = "Submitted";
       optionButtons.forEach((button) => button.setAttribute("disabled", "true"));
       this.renderResult(resultEl, result, "quiz");
     };
@@ -278,7 +282,7 @@ module.exports = class PiLearningPlugin extends Plugin {
       if (!code.trim() || awaiting || passed) return;
       awaiting = true;
       submit.setAttribute("disabled", "true");
-      submit.setText("Submitting…");
+      submit.textContent = "Submitting…";
       resultEl.removeClass("is-visible");
       try {
         await this.writeSubmission(subjectRoot, {
@@ -287,12 +291,12 @@ module.exports = class PiLearningPlugin extends Plugin {
           code,
           submittedAt: new Date().toISOString(),
         });
-        submit.setText("Submitted");
+        submit.textContent = "Submitted";
       } catch (error) {
         console.error("Pi Learning: code submission failed", error);
         awaiting = false;
         submit.removeAttribute("disabled");
-        submit.setText("Submit code");
+        submit.textContent = "Submit code";
         new Notice("Pi Learning could not submit this code.");
       }
     });
@@ -305,11 +309,11 @@ module.exports = class PiLearningPlugin extends Plugin {
       if (passed) {
         editor.setAttribute("disabled", "true");
         submit.setAttribute("disabled", "true");
-        submit.setText("Completed");
+        submit.textContent = "Completed";
       } else {
         editor.removeAttribute("disabled");
         submit.removeAttribute("disabled");
-        submit.setText("Submit revision");
+        submit.textContent = "Submit revision";
       }
     };
 
