@@ -4,33 +4,15 @@
  * This is NOT a transcript mirror.
  *
  * Durable lesson prose is written only when the model deliberately calls
- * `lesson_write`. Quiz questions/results are still captured automatically so
- * the note preserves retrieval practice without copying the surrounding chat.
- *
- * It intentionally omits:
- *   - ordinary user chat
- *   - ordinary assistant chat unless explicitly saved with lesson_write
- *   - bash/read/write/edit chatter
- *   - researcher/subagent chatter
- *   - orchestration tool results
- *
- * Human commands:
- *   /learn <dir>          Set the subject directory relative to cwd.
- *   /lesson <slug>        Manually start/switch a lesson note (escape hatch).
- *   /lesson-stop          Stop writing lesson notes.
- *   /lesson-status        Show current subject + lesson.
- *
- * Model tools:
- *   lesson_note({ topic })  — start/switch the active concept note.
- *   lesson_write({ content }) — append curated standalone lesson Markdown.
+ * `lesson_write`. Quiz questions/results are captured automatically, but they
+ * are buffered until the quiz finishes so an in-flight `lesson_write` can land
+ * first. This preserves lesson -> quiz ordering in the note.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
-
-const QA_TOOLS = new Set(["quiz"]);
 
 const LessonNoteParams = Type.Object({
 	topic: Type.String({
@@ -40,7 +22,7 @@ const LessonNoteParams = Type.Object({
 	title: Type.Optional(
 		Type.String({
 			description:
-			"Optional human-readable note title. Defaults to title-casing the topic slug. Use only when the natural title cannot be derived cleanly from the slug.",
+			"Optional human-readable note title. Defaults to title-casing the topic slug.",
 		}),
 	),
 });
@@ -48,9 +30,14 @@ const LessonNoteParams = Type.Object({
 const LessonWriteParams = Type.Object({
 	content: Type.String({
 		description:
-			"Clean standalone Markdown worth preserving in the active concept note. Write the durable explanation, example, diagram markup, or key distinction itself — never conversational filler, process commentary, or a transcript of the chat.",
+			"Clean standalone Markdown worth preserving in the active concept note. Write durable knowledge only — never conversational filler, process commentary, or a transcript.",
 	}),
 });
+
+type PendingQuiz = {
+	file: string;
+	questionBlock: string;
+};
 
 function slugify(input: string): string {
 	return input
@@ -76,10 +63,78 @@ function callout(type: string, title: string, bodyLines: string[]): string {
 	return lines.join("\n");
 }
 
+function buildQuizQuestionBlock(
+	question: string,
+	context: string | undefined,
+	options: Array<{ index: number; label: string }>,
+): string {
+	const body: string[] = [];
+	for (const line of question.split("\n")) body.push(line);
+	if (context) {
+		body.push("");
+		for (const line of context.split("\n")) body.push(line);
+	}
+	if (options.length > 0) {
+		body.push("");
+		for (const option of options) body.push(`${option.index}. ${option.label}`);
+	}
+	return callout("question", "Quiz", body);
+}
+
+function buildQuizResultBlock(details: any): string {
+	if (details?.status === "cancelled") {
+		return callout("warning", "Quiz — skipped", ["(user skipped)"]);
+	}
+
+	if (details?.status === "unavailable") {
+		return callout("warning", "Quiz — unavailable", [details?.message || ""]);
+	}
+
+	const dontKnow = details?.dontKnow === true;
+	const correct = details?.correct === true;
+	const type = dontKnow ? "question" : correct ? "success" : "failure";
+	const title = dontKnow
+		? "Quiz — I don't know"
+		: correct
+			? "Quiz — correct ✓"
+			: "Quiz — incorrect ✗";
+	const body: string[] = [];
+
+	if (dontKnow) {
+		body.push("Your answer: I don't know");
+	} else {
+		const answers: any[] = details?.answers || [];
+		const selected = answers.map((a) => `${a.index}. ${a.label}`).join(", ") || "(none)";
+		body.push(`Your answer: ${selected}`);
+	}
+
+	const correctIndices: number[] = details?.correctIndices || [];
+	if (correctIndices.length > 0) {
+		body.push(`Correct answer: ${correctIndices.join(", ")}`);
+	}
+
+	if (details?.note) {
+		body.push("");
+		body.push(`Note: ${String(details.note)}`);
+	}
+
+	if (details?.explanation) {
+		body.push("");
+		for (const line of String(details.explanation).split("\n")) body.push(line);
+	}
+
+	return callout(type, title, body);
+}
+
 export default function lessonLog(pi: ExtensionAPI) {
 	let subjectDir: string | null = null;
 	let lessonFile: string | null = null;
 	let lessonSlug: string | null = null;
+
+	// Quiz questions are held here until their result arrives. Previously the
+	// question was appended as soon as the quiz UI opened, which could race ahead
+	// of a lesson_write call from the same teaching step.
+	const pendingQuizzes = new Map<string, PendingQuiz>();
 
 	let writeLock: Promise<void> = Promise.resolve();
 	function withLock<T>(fn: () => T | Promise<T>): Promise<T> {
@@ -91,18 +146,17 @@ export default function lessonLog(pi: ExtensionAPI) {
 		return prev.then(fn).finally(() => release());
 	}
 
-	function append(text: string): void {
-		if (!lessonFile) return;
+	function appendToFile(file: string, text: string): void {
 		const trimmed = text.trim();
 		if (!trimmed) return;
 
-		fs.mkdirSync(path.dirname(lessonFile), { recursive: true });
+		fs.mkdirSync(path.dirname(file), { recursive: true });
 		let current = "";
-		if (fs.existsSync(lessonFile)) {
-			current = fs.readFileSync(lessonFile, "utf-8");
+		if (fs.existsSync(file)) {
+			current = fs.readFileSync(file, "utf-8");
 		}
 		const prefix = current.trim().length > 0 ? "\n\n" : "";
-		fs.writeFileSync(lessonFile, current + prefix + trimmed + "\n", "utf-8");
+		fs.writeFileSync(file, current + prefix + trimmed + "\n", "utf-8");
 	}
 
 	function activateLesson(
@@ -229,11 +283,10 @@ export default function lessonLog(pi: ExtensionAPI) {
 			"When teaching and a /learn directory is configured, call lesson_note BEFORE the first substantive explanation of each distinct concept, then use lesson_write to save only curated standalone teaching material.",
 		promptGuidelines: [
 			"The user controls the subject directory with /learn <dir>. Never silently choose or change the subject directory yourself.",
-			"Before teaching the first distinct concept after the plan is approved, call lesson_note with a short stable topic slug.",
-			"When moving to the next distinct concept/node in the teaching dependency graph, call lesson_note before explaining that new concept.",
-			"Reuse the SAME topic slug when revisiting a concept. Do not create topic-2, topic-part-2, or date-based duplicates.",
+			"Before teaching a distinct concept, call lesson_note with a short stable topic slug.",
+			"Reuse the SAME topic slug when revisiting a concept.",
 			"Do not switch notes for clarifications, examples, quizzes, retries, researcher calls, or stylistic changes if the underlying concept is unchanged.",
-			"Choose concept-sized notes: 'inheritance', 'self', 'agent-harness', 'transaction-isolation'. Avoid huge subject slugs like 'python' and tiny conversational slugs like 'example-1'.",
+			"Choose concept-sized notes: 'inheritance', 'self', 'agent-harness', 'transaction-isolation'.",
 		],
 		parameters: LessonNoteParams,
 
@@ -279,18 +332,17 @@ export default function lessonLog(pi: ExtensionAPI) {
 		name: "lesson_write",
 		label: "lesson write",
 		description:
-			"Append intentionally curated, durable Markdown to the currently active concept note. Use this for standalone explanations, important examples, key distinctions, mental models, and useful diagram markup that should survive after the chat is gone. Ordinary assistant messages are NOT saved automatically. Do not use this for greetings, transitions, process commentary, researcher chatter, or a verbatim transcript. Quiz questions and results are captured automatically and should not be duplicated with lesson_write.",
+			"Append intentionally curated, durable Markdown to the currently active concept note. Use this for standalone explanations, important examples, key distinctions, mental models, and useful diagram markup. Ordinary assistant messages are NOT saved automatically. Quiz questions and results are captured automatically and should not be duplicated with lesson_write.",
 		promptSnippet:
-			"Use lesson_write to save only the durable knowledge from your teaching. Chat freely with the learner, but explicitly write the clean standalone version to the active lesson note when material is worth preserving.",
+			"Use lesson_write to save only the durable knowledge from your teaching. If a quiz follows, complete lesson_write first; do not intentionally quiz before the durable explanation has been saved.",
 		promptGuidelines: [
-			"Call lesson_write only when there is durable knowledge worth keeping. Not every response needs a write.",
+			"Call lesson_write only when there is durable knowledge worth keeping.",
 			"Write standalone Markdown that makes sense without the surrounding conversation.",
 			"Prefer the distilled explanation over copying your chat response verbatim.",
-			"Include useful code examples, Mermaid blocks, equations, or concise examples when they materially improve the note.",
-			"Do not save conversational filler such as acknowledgements, praise, transitions, or statements about what you are about to do.",
-			"Do not save subagent/research process commentary or tool-call details.",
-			"Do not duplicate quiz content; quiz questions and results are logged automatically while a lesson note is active.",
-			"If the current concept changes, call lesson_note first so the material lands in the correct file.",
+			"Do not save conversational filler, subagent process commentary, or tool-call details.",
+			"Do not duplicate quiz content; quiz questions and results are logged automatically.",
+			"When a quiz follows an explanation, finish lesson_write before invoking the quiz. Avoid issuing lesson_write and quiz as intentionally parallel work.",
+			"If the current concept changes, call lesson_note first.",
 		],
 		parameters: LessonWriteParams,
 
@@ -316,7 +368,7 @@ export default function lessonLog(pi: ExtensionAPI) {
 			}
 
 			const target = lessonFile;
-			await withLock(() => append(content));
+			await withLock(() => appendToFile(target, content));
 
 			return {
 				content: [{ type: "text", text: `Saved durable lesson material to ${target}` }],
@@ -329,92 +381,58 @@ export default function lessonLog(pi: ExtensionAPI) {
 		},
 	});
 
-	// Quiz questions are logged from the post-shuffle update so Obsidian matches
-	// exactly what the learner saw in the terminal. Ordinary assistant messages
-	// are intentionally NOT logged; durable prose must go through lesson_write.
-	const loggedQuizQuestion = new Set<string>();
+	// Capture the true post-shuffle quiz question, but do NOT write it yet.
+	// Waiting until tool_result prevents the question from racing ahead of a
+	// lesson_write call that belongs before it.
 	pi.on("tool_execution_update", async (event, _ctx) => {
 		if (!lessonFile) return;
-		const toolName = (event as any).toolName;
-		if (toolName !== "quiz") return;
+		if ((event as any).toolName !== "quiz") return;
 
-		const toolCallId = (event as any).toolCallId;
-		if (loggedQuizQuestion.has(toolCallId)) return;
+		const toolCallId = String((event as any).toolCallId || "");
+		if (!toolCallId || pendingQuizzes.has(toolCallId)) return;
 
-		const shuffled = (event as any).partialResult?.details?.options as
+		const options = (event as any).partialResult?.details?.options as
 			| Array<{ index: number; label: string }>
 			| undefined;
-		if (!shuffled || shuffled.length === 0) return;
-
-		loggedQuizQuestion.add(toolCallId);
+		if (!options || options.length === 0) return;
 
 		const input = (event as any).args || {};
-		const question: string = input.question || "";
-		const details: string | undefined = input.details?.trim() || undefined;
-		const body: string[] = [];
+		const question = String(input.question || "");
+		const context = input.details?.trim() || undefined;
 
-		for (const line of question.split("\n")) body.push(line);
-		if (details) {
-			body.push("");
-			for (const line of details.split("\n")) body.push(line);
-		}
-		body.push("");
-		for (const option of shuffled) body.push(`${option.index}. ${option.label}`);
-
-		await withLock(() => append(callout("question", "Quiz", body)));
+		pendingQuizzes.set(toolCallId, {
+			file: lessonFile,
+			questionBlock: buildQuizQuestionBlock(question, context, options),
+		});
 	});
 
+	// Write the question + result as one ordered unit only after the learner has
+	// answered. By then, a preceding lesson_write has had time to complete.
 	pi.on("tool_result", async (event, _ctx) => {
-		if (!lessonFile) return;
+		if ((event as any).toolName !== "quiz") return;
 
-		const toolName = (event as any).toolName;
-		if (!QA_TOOLS.has(toolName)) return;
+		const toolCallId = String((event as any).toolCallId || "");
+		const details: any = (event as any).details || {};
+		const pending = toolCallId ? pendingQuizzes.get(toolCallId) : undefined;
 
-		const details: any = (event as any).details;
+		const target = pending?.file ?? lessonFile;
+		if (!target) return;
 
-		if (details?.status === "cancelled") {
-			await withLock(() => append(callout("warning", "Quiz — skipped", ["(user skipped)"])));
-			return;
+		let questionBlock = pending?.questionBlock;
+		if (!questionBlock) {
+			const options: Array<{ index: number; label: string }> = Array.isArray(details?.options)
+				? details.options
+				: [];
+			questionBlock = buildQuizQuestionBlock(
+				String(details?.question || ""),
+				details?.context?.trim() || undefined,
+				options,
+			);
 		}
 
-		if (details?.status === "unavailable") {
-			await withLock(() => append(callout("warning", "Quiz — unavailable", [details?.message || ""])));
-			return;
-		}
+		const resultBlock = buildQuizResultBlock(details);
+		await withLock(() => appendToFile(target, `${questionBlock}\n\n${resultBlock}`));
 
-		const dontKnow = details?.dontKnow === true;
-		const correct = details?.correct === true;
-		const type = dontKnow ? "question" : correct ? "success" : "failure";
-		const title = dontKnow
-			? "Quiz — I don't know"
-			: correct
-				? "Quiz — correct ✓"
-				: "Quiz — incorrect ✗";
-		const body: string[] = [];
-
-		if (dontKnow) {
-			body.push("Your answer: I don't know");
-		} else {
-			const answers: any[] = details?.answers || [];
-			const selected = answers.map((a) => `${a.index}. ${a.label}`).join(", ") || "(none)";
-			body.push(`Your answer: ${selected}`);
-		}
-
-		const correctIndices: number[] = details?.correctIndices || [];
-		if (correctIndices.length > 0) {
-			body.push(`Correct answer: ${correctIndices.join(", ")}`);
-		}
-
-		if (details?.note) {
-			body.push("");
-			body.push(`Note: ${String(details.note)}`);
-		}
-
-		if (details?.explanation) {
-			body.push("");
-			for (const line of String(details.explanation).split("\n")) body.push(line);
-		}
-
-		await withLock(() => append(callout(type, title, body)));
+		if (toolCallId) pendingQuizzes.delete(toolCallId);
 	});
 }
