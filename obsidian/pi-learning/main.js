@@ -1,4 +1,4 @@
-const { Plugin, MarkdownRenderChild, Notice, normalizePath } = require("obsidian");
+const { Plugin, MarkdownRenderChild, MarkdownRenderer, Notice, normalizePath } = require("obsidian");
 
 class ResultWatcher extends MarkdownRenderChild {
   constructor(containerEl, plugin, subjectRoot, assessmentId, onResult) {
@@ -85,6 +85,26 @@ module.exports = class PiLearningPlugin extends Plugin {
     }
   }
 
+  normalizeAssessmentMarkdown(value) {
+    let text = String(value || "").trim();
+    // Repair compact fenced code emitted inside JSON strings, e.g.
+    // "Consider: ```python x = 1 ``` What happens?"
+    text = text.replace(/```([A-Za-z0-9_+#.-]+)\s+([\s\S]*?)\s+```/g, (_m, lang, code) => {
+      return `\n\n\`\`\`${lang}\n${String(code).trim()}\n\`\`\`\n\n`;
+    });
+    return text;
+  }
+
+  async renderMarkdown(markdown, el, sourcePath) {
+    await MarkdownRenderer.render(
+      this.app,
+      this.normalizeAssessmentMarkdown(markdown),
+      el,
+      sourcePath || "",
+      this,
+    );
+  }
+
   subjectRootFromSource(sourcePath) {
     const normalized = normalizePath(sourcePath || "");
     for (const marker of ["/quiz/", "/topic/", "/plan/"]) {
@@ -109,9 +129,7 @@ module.exports = class PiLearningPlugin extends Plugin {
       if (!(await adapter.exists(current))) {
         try {
           await adapter.mkdir(current);
-        } catch (_) {
-          // Another writer may have created it between exists() and mkdir().
-        }
+        } catch (_) {}
       }
     }
   }
@@ -121,8 +139,10 @@ module.exports = class PiLearningPlugin extends Plugin {
     await this.ensureFolder(folder);
     const safeId = String(payload.assessmentId || "assessment").replace(/[^a-zA-Z0-9_-]/g, "-");
     const filename = `${safeId}-${Date.now()}.json`;
-    const target = normalizePath(`${folder}/${filename}`);
-    await this.app.vault.adapter.write(target, `${JSON.stringify(payload, null, 2)}\n`);
+    await this.app.vault.adapter.write(
+      normalizePath(`${folder}/${filename}`),
+      `${JSON.stringify(payload, null, 2)}\n`,
+    );
   }
 
   async readResult(subjectRoot, assessmentId) {
@@ -139,7 +159,8 @@ module.exports = class PiLearningPlugin extends Plugin {
   createAssessmentShell(el, payload) {
     el.empty();
     const shell = el.createDiv({ cls: "pi-learning-assessment" });
-    shell.createDiv({ cls: "pi-learning-kicker", text: payload.label || "Check" });
+    const header = shell.createDiv({ cls: "pi-learning-assessment-header" });
+    header.createDiv({ cls: "pi-learning-kicker", text: payload.label || "Check" });
     return shell;
   }
 
@@ -147,12 +168,15 @@ module.exports = class PiLearningPlugin extends Plugin {
     return shell.createDiv({ cls: "pi-learning-result" });
   }
 
-  renderResult(resultEl, result, kind) {
+  async renderResult(resultEl, result, kind, sourcePath) {
     resultEl.empty();
     resultEl.addClass("is-visible");
     const title = result.correct ? "Correct" : kind === "code" ? "Needs revision" : "Review this";
     resultEl.createDiv({ cls: "pi-learning-result-title", text: title });
-    if (result.feedback) resultEl.createDiv({ cls: "pi-learning-result-copy", text: result.feedback });
+    if (result.feedback) {
+      const copy = resultEl.createDiv({ cls: "pi-learning-result-copy markdown-rendered" });
+      await this.renderMarkdown(result.feedback, copy, sourcePath);
+    }
     if (result.testEvidence) {
       const evidence = resultEl.createDiv({ cls: "pi-learning-test-evidence" });
       evidence.createDiv({ cls: "pi-learning-test-label", text: "Test evidence" });
@@ -164,14 +188,28 @@ module.exports = class PiLearningPlugin extends Plugin {
   async renderQuiz(source, el, ctx) {
     const payload = this.parsePayload(source, el);
     if (!payload) return;
+
     const subjectRoot = this.subjectRootFromSource(ctx.sourcePath);
     const shell = this.createAssessmentShell(el, payload);
-    shell.createEl("h3", { cls: "pi-learning-question", text: payload.question || "Question" });
+    const question = shell.createDiv({ cls: "pi-learning-question markdown-rendered" });
+    await this.renderMarkdown(payload.question || "Question", question, ctx.sourcePath);
 
     const options = shell.createDiv({ cls: "pi-learning-options" });
     const optionButtons = [];
     let selectedIndex = null;
     let completed = false;
+
+    (payload.options || []).forEach((option, index) => {
+      const button = options.createEl("button", {
+        cls: "pi-learning-option",
+        attr: { type: "button", "aria-pressed": "false" },
+      });
+      const badge = button.createSpan({ cls: "pi-learning-option-index", text: String.fromCharCode(65 + index) });
+      badge.setAttribute("aria-hidden", "true");
+      const content = button.createDiv({ cls: "pi-learning-option-text markdown-rendered" });
+      void this.renderMarkdown(String(option), content, ctx.sourcePath);
+      optionButtons.push(button);
+    });
 
     const submitRow = shell.createDiv({ cls: "pi-learning-submit-row" });
     submitRow.createDiv({ cls: "pi-learning-helper", text: "Choose one answer." });
@@ -191,22 +229,12 @@ module.exports = class PiLearningPlugin extends Plugin {
       });
     };
 
-    const setSelected = (index) => {
-      if (completed) return;
-      paintSelection(index);
-      submit.removeAttribute("disabled");
-    };
-
-    (payload.options || []).forEach((option, index) => {
-      const button = options.createEl("button", {
-        cls: "pi-learning-option",
-        attr: { type: "button", "aria-pressed": "false" },
+    optionButtons.forEach((button, index) => {
+      button.addEventListener("click", () => {
+        if (completed) return;
+        paintSelection(index + 1);
+        submit.removeAttribute("disabled");
       });
-      const badge = button.createSpan({ cls: "pi-learning-option-index", text: String.fromCharCode(65 + index) });
-      badge.setAttribute("aria-hidden", "true");
-      button.createSpan({ cls: "pi-learning-option-text", text: String(option) });
-      button.addEventListener("click", () => setSelected(index + 1));
-      optionButtons.push(button);
     });
 
     submit.addEventListener("click", async () => {
@@ -229,34 +257,40 @@ module.exports = class PiLearningPlugin extends Plugin {
       }
     });
 
-    const applyResult = (result) => {
+    const applyResult = async (result) => {
       if (Number.isInteger(result.selectedIndex)) paintSelection(Number(result.selectedIndex));
       completed = true;
       submit.setAttribute("disabled", "true");
       submit.textContent = "Submitted";
       optionButtons.forEach((button) => button.setAttribute("disabled", "true"));
-      this.renderResult(resultEl, result, "quiz");
+      await this.renderResult(resultEl, result, "quiz", ctx.sourcePath);
     };
 
     const existing = await this.readResult(subjectRoot, payload.id);
-    if (existing) applyResult(existing);
-    ctx.addChild(new ResultWatcher(el, this, subjectRoot, payload.id, applyResult));
+    if (existing) await applyResult(existing);
+    ctx.addChild(new ResultWatcher(el, this, subjectRoot, payload.id, (result) => void applyResult(result)));
   }
 
   async renderCode(source, el, ctx) {
     const payload = this.parsePayload(source, el);
     if (!payload) return;
+
     const subjectRoot = this.subjectRootFromSource(ctx.sourcePath);
     const shell = this.createAssessmentShell(el, payload);
-    shell.createEl("h3", { cls: "pi-learning-question", text: payload.prompt || "Coding exercise" });
+    const question = shell.createDiv({ cls: "pi-learning-question markdown-rendered" });
+    await this.renderMarkdown(payload.prompt || "Coding exercise", question, ctx.sourcePath);
 
     const criteria = Array.isArray(payload.criteria) ? payload.criteria : [];
     if (criteria.length) {
-      const list = shell.createEl("ul", { cls: "pi-learning-criteria" });
+      const criteriaWrap = shell.createDiv({ cls: "pi-learning-criteria-wrap" });
+      criteriaWrap.createDiv({ cls: "pi-learning-section-label", text: "Acceptance criteria" });
+      const list = criteriaWrap.createEl("ul", { cls: "pi-learning-criteria" });
       criteria.forEach((criterion) => list.createEl("li", { text: String(criterion) }));
     }
 
     const editorWrap = shell.createDiv({ cls: "pi-learning-code-wrap" });
+    const editorLabel = editorWrap.createDiv({ cls: "pi-learning-code-label" });
+    editorLabel.createSpan({ text: payload.language || "code" });
     const editor = editorWrap.createEl("textarea", {
       cls: "pi-learning-code-editor",
       attr: {
@@ -267,7 +301,7 @@ module.exports = class PiLearningPlugin extends Plugin {
     editor.value = payload.starterCode || "";
 
     const submitRow = shell.createDiv({ cls: "pi-learning-submit-row" });
-    submitRow.createDiv({ cls: "pi-learning-helper", text: `Write your ${payload.language || "code"} solution here.` });
+    submitRow.createDiv({ cls: "pi-learning-helper", text: "Write your solution here." });
     const submit = submitRow.createEl("button", {
       cls: "pi-learning-submit",
       text: "Submit code",
@@ -301,11 +335,11 @@ module.exports = class PiLearningPlugin extends Plugin {
       }
     });
 
-    const applyResult = (result) => {
+    const applyResult = async (result) => {
       awaiting = false;
       passed = result.correct === true;
       if (typeof result.submission === "string" && result.submission.length) editor.value = result.submission;
-      this.renderResult(resultEl, result, "code");
+      await this.renderResult(resultEl, result, "code", ctx.sourcePath);
       if (passed) {
         editor.setAttribute("disabled", "true");
         submit.setAttribute("disabled", "true");
@@ -318,7 +352,7 @@ module.exports = class PiLearningPlugin extends Plugin {
     };
 
     const existing = await this.readResult(subjectRoot, payload.id);
-    if (existing) applyResult(existing);
-    ctx.addChild(new ResultWatcher(el, this, subjectRoot, payload.id, applyResult));
+    if (existing) await applyResult(existing);
+    ctx.addChild(new ResultWatcher(el, this, subjectRoot, payload.id, (result) => void applyResult(result)));
   }
 };
