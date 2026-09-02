@@ -1,13 +1,15 @@
 /**
  * lesson-log — write clean, topic-based learning notes for Obsidian.
  *
- * Unlike md-log, this is NOT a transcript mirror. It records only:
- *   - assistant lesson prose while a lesson is active
- *   - quiz questions
- *   - quiz answers + explanations
+ * This is NOT a transcript mirror.
+ *
+ * Durable lesson prose is written only when the model deliberately calls
+ * `lesson_write`. Quiz questions/results are still captured automatically so
+ * the note preserves retrieval practice without copying the surrounding chat.
  *
  * It intentionally omits:
  *   - ordinary user chat
+ *   - ordinary assistant chat unless explicitly saved with lesson_write
  *   - bash/read/write/edit chatter
  *   - researcher/subagent chatter
  *   - orchestration tool results
@@ -18,18 +20,9 @@
  *   /lesson-stop          Stop writing lesson notes.
  *   /lesson-status        Show current subject + lesson.
  *
- * Model tool:
- *   lesson_note({ topic }) — automatically start/switch notes at semantic topic boundaries.
- *
- * Example:
- *   /learn python/oop
- *   model calls lesson_note({ topic: "inheritance" })
- *
- * writes to:
- *   <cwd>/python/oop/inheritance.md
- *
- * The lesson file is created automatically if missing. If it already exists,
- * new material is appended so revisiting a topic enriches the same note.
+ * Model tools:
+ *   lesson_note({ topic })  — start/switch the active concept note.
+ *   lesson_write({ content }) — append curated standalone lesson Markdown.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -50,6 +43,13 @@ const LessonNoteParams = Type.Object({
 			"Optional human-readable note title. Defaults to title-casing the topic slug. Use only when the natural title cannot be derived cleanly from the slug.",
 		}),
 	),
+});
+
+const LessonWriteParams = Type.Object({
+	content: Type.String({
+		description:
+			"Clean standalone Markdown worth preserving in the active concept note. Write the durable explanation, example, diagram markup, or key distinction itself — never conversational filler, process commentary, or a transcript of the chat.",
+	}),
 });
 
 function slugify(input: string): string {
@@ -93,19 +93,24 @@ export default function lessonLog(pi: ExtensionAPI) {
 
 	function append(text: string): void {
 		if (!lessonFile) return;
+		const trimmed = text.trim();
+		if (!trimmed) return;
+
 		fs.mkdirSync(path.dirname(lessonFile), { recursive: true });
 		let current = "";
 		if (fs.existsSync(lessonFile)) {
 			current = fs.readFileSync(lessonFile, "utf-8");
 		}
 		const prefix = current.trim().length > 0 ? "\n\n" : "";
-		fs.writeFileSync(lessonFile, current + prefix + text.trim() + "\n", "utf-8");
+		fs.writeFileSync(lessonFile, current + prefix + trimmed + "\n", "utf-8");
 	}
 
-	function activateLesson(ctx: any, topicInput: string, titleInput?: string): { file: string; slug: string; created: boolean } | null {
-		if (!subjectDir) {
-			return null;
-		}
+	function activateLesson(
+		ctx: any,
+		topicInput: string,
+		titleInput?: string,
+	): { file: string; slug: string; created: boolean } | null {
+		if (!subjectDir) return null;
 
 		const slug = slugify(topicInput);
 		if (!slug) return null;
@@ -129,16 +134,21 @@ export default function lessonLog(pi: ExtensionAPI) {
 				theme.fg("accent", "📘 ") + theme.fg("dim", path.basename(file)),
 			);
 		}
+
 		return { file, slug, created };
 	}
 
 	pi.on("session_start", async (_event, ctx: any) => {
-		let last: { subjectDir?: string | null; lessonFile?: string | null; lessonSlug?: string | null } | undefined;
+		let last:
+			| { subjectDir?: string | null; lessonFile?: string | null; lessonSlug?: string | null }
+			| undefined;
+
 		for (const entry of ctx.sessionManager.getEntries()) {
 			if (entry.type === "custom" && entry.customType === "lesson-log") {
 				last = entry.data as any;
 			}
 		}
+
 		if (last?.subjectDir) subjectDir = last.subjectDir;
 		if (last?.lessonFile && fs.existsSync(last.lessonFile)) {
 			lessonFile = last.lessonFile;
@@ -159,6 +169,7 @@ export default function lessonLog(pi: ExtensionAPI) {
 				ctx.ui.notify("Usage: /learn <directory>", "warning");
 				return;
 			}
+
 			const resolved = path.isAbsolute(raw) ? raw : path.resolve(ctx.cwd, raw);
 			fs.mkdirSync(resolved, { recursive: true });
 			subjectDir = resolved;
@@ -177,11 +188,13 @@ export default function lessonLog(pi: ExtensionAPI) {
 				ctx.ui.notify("Set a learning directory first with /learn <dir>", "warning");
 				return;
 			}
+
 			const result = activateLesson(ctx, args.trim());
 			if (!result) {
 				ctx.ui.notify("Usage: /lesson <topic-slug>", "warning");
 				return;
 			}
+
 			ctx.ui.notify(`Lesson note: ${result.file}`, "success");
 		},
 	});
@@ -211,9 +224,9 @@ export default function lessonLog(pi: ExtensionAPI) {
 		name: "lesson_note",
 		label: "lesson note",
 		description:
-			"Switch the active Obsidian learning note to the distinct concept you are about to teach. The human sets the subject directory once with /learn; you call this tool automatically at semantic topic boundaries. The note is created if missing and reused if it already exists. Do NOT call it for every message, clarification, quiz, example, or researcher lookup. Call it when the knowledge graph moves to a genuinely distinct concept that deserves its own durable note.",
+			"Switch the active Obsidian learning note to the distinct concept you are about to teach. The human sets the subject directory once with /learn. The note is created if missing and reused if it already exists. Activating a note does NOT save ordinary assistant messages; use lesson_write for durable lesson material.",
 		promptSnippet:
-			"When teaching and a /learn directory is configured, call lesson_note BEFORE the first substantive explanation of each distinct concept so lesson prose and quizzes land in the correct topic Markdown file.",
+			"When teaching and a /learn directory is configured, call lesson_note BEFORE the first substantive explanation of each distinct concept, then use lesson_write to save only curated standalone teaching material.",
 		promptGuidelines: [
 			"The user controls the subject directory with /learn <dir>. Never silently choose or change the subject directory yourself.",
 			"Before teaching the first distinct concept after the plan is approved, call lesson_note with a short stable topic slug.",
@@ -221,7 +234,6 @@ export default function lessonLog(pi: ExtensionAPI) {
 			"Reuse the SAME topic slug when revisiting a concept. Do not create topic-2, topic-part-2, or date-based duplicates.",
 			"Do not switch notes for clarifications, examples, quizzes, retries, researcher calls, or stylistic changes if the underlying concept is unchanged.",
 			"Choose concept-sized notes: 'inheritance', 'self', 'agent-harness', 'transaction-isolation'. Avoid huge subject slugs like 'python' and tiny conversational slugs like 'example-1'.",
-			"Once a lesson note is active, write teaching prose so it remains useful when read later without the surrounding chat. Avoid conversational filler and process commentary in lesson prose.",
 		],
 		parameters: LessonNoteParams,
 
@@ -263,57 +275,108 @@ export default function lessonLog(pi: ExtensionAPI) {
 		},
 	});
 
-	// Only assistant prose is mirrored. User messages are intentionally omitted.
-	pi.on("message_end", async (event, _ctx) => {
-		if (!lessonFile) return;
-		const msg: any = event.message;
-		if (!msg || msg.role !== "assistant") return;
-		const textParts = (msg.content || [])
-			.filter((c: any) => c.type === "text")
-			.map((c: any) => String(c.text || "").trim())
-			.filter((t: string) => t.length > 0);
-		if (textParts.length === 0) return;
-		await withLock(() => append(textParts.join("\n\n")));
+	pi.registerTool({
+		name: "lesson_write",
+		label: "lesson write",
+		description:
+			"Append intentionally curated, durable Markdown to the currently active concept note. Use this for standalone explanations, important examples, key distinctions, mental models, and useful diagram markup that should survive after the chat is gone. Ordinary assistant messages are NOT saved automatically. Do not use this for greetings, transitions, process commentary, researcher chatter, or a verbatim transcript. Quiz questions and results are captured automatically and should not be duplicated with lesson_write.",
+		promptSnippet:
+			"Use lesson_write to save only the durable knowledge from your teaching. Chat freely with the learner, but explicitly write the clean standalone version to the active lesson note when material is worth preserving.",
+		promptGuidelines: [
+			"Call lesson_write only when there is durable knowledge worth keeping. Not every response needs a write.",
+			"Write standalone Markdown that makes sense without the surrounding conversation.",
+			"Prefer the distilled explanation over copying your chat response verbatim.",
+			"Include useful code examples, Mermaid blocks, equations, or concise examples when they materially improve the note.",
+			"Do not save conversational filler such as acknowledgements, praise, transitions, or statements about what you are about to do.",
+			"Do not save subagent/research process commentary or tool-call details.",
+			"Do not duplicate quiz content; quiz questions and results are logged automatically while a lesson note is active.",
+			"If the current concept changes, call lesson_note first so the material lands in the correct file.",
+		],
+		parameters: LessonWriteParams,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			if (!lessonFile) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "No active lesson note. Call lesson_note for the current concept first.",
+						},
+					],
+					details: { status: "no-lesson" },
+				};
+			}
+
+			const content = params.content.trim();
+			if (!content) {
+				return {
+					content: [{ type: "text", text: "Nothing written: lesson content was empty." }],
+					details: { status: "empty" },
+				};
+			}
+
+			const target = lessonFile;
+			await withLock(() => append(content));
+
+			return {
+				content: [{ type: "text", text: `Saved durable lesson material to ${target}` }],
+				details: {
+					status: "written",
+					file: target,
+					topic: lessonSlug,
+				},
+			};
+		},
 	});
 
 	// Quiz questions are logged from the post-shuffle update so Obsidian matches
-	// exactly what the learner saw in the terminal.
+	// exactly what the learner saw in the terminal. Ordinary assistant messages
+	// are intentionally NOT logged; durable prose must go through lesson_write.
 	const loggedQuizQuestion = new Set<string>();
 	pi.on("tool_execution_update", async (event, _ctx) => {
 		if (!lessonFile) return;
 		const toolName = (event as any).toolName;
 		if (toolName !== "quiz") return;
+
 		const toolCallId = (event as any).toolCallId;
 		if (loggedQuizQuestion.has(toolCallId)) return;
-		const shuffled = (event as any).partialResult?.details?.options as Array<{ index: number; label: string }> | undefined;
+
+		const shuffled = (event as any).partialResult?.details?.options as
+			| Array<{ index: number; label: string }>
+			| undefined;
 		if (!shuffled || shuffled.length === 0) return;
+
 		loggedQuizQuestion.add(toolCallId);
 
 		const input = (event as any).args || {};
 		const question: string = input.question || "";
 		const details: string | undefined = input.details?.trim() || undefined;
 		const body: string[] = [];
+
 		for (const line of question.split("\n")) body.push(line);
 		if (details) {
 			body.push("");
 			for (const line of details.split("\n")) body.push(line);
 		}
 		body.push("");
-		for (const o of shuffled) body.push(`${o.index}. ${o.label}`);
+		for (const option of shuffled) body.push(`${option.index}. ${option.label}`);
 
 		await withLock(() => append(callout("question", "Quiz", body)));
 	});
 
 	pi.on("tool_result", async (event, _ctx) => {
 		if (!lessonFile) return;
+
 		const toolName = (event as any).toolName;
 		if (!QA_TOOLS.has(toolName)) return;
+
 		const details: any = (event as any).details;
 
 		if (details?.status === "cancelled") {
 			await withLock(() => append(callout("warning", "Quiz — skipped", ["(user skipped)"])));
 			return;
 		}
+
 		if (details?.status === "unavailable") {
 			await withLock(() => append(callout("warning", "Quiz — unavailable", [details?.message || ""])));
 			return;
@@ -322,7 +385,11 @@ export default function lessonLog(pi: ExtensionAPI) {
 		const dontKnow = details?.dontKnow === true;
 		const correct = details?.correct === true;
 		const type = dontKnow ? "question" : correct ? "success" : "failure";
-		const title = dontKnow ? "Quiz — I don't know" : correct ? "Quiz — correct ✓" : "Quiz — incorrect ✗";
+		const title = dontKnow
+			? "Quiz — I don't know"
+			: correct
+				? "Quiz — correct ✓"
+				: "Quiz — incorrect ✗";
 		const body: string[] = [];
 
 		if (dontKnow) {
@@ -334,11 +401,15 @@ export default function lessonLog(pi: ExtensionAPI) {
 		}
 
 		const correctIndices: number[] = details?.correctIndices || [];
-		if (correctIndices.length > 0) body.push(`Correct answer: ${correctIndices.join(", ")}`);
+		if (correctIndices.length > 0) {
+			body.push(`Correct answer: ${correctIndices.join(", ")}`);
+		}
+
 		if (details?.note) {
 			body.push("");
 			body.push(`Note: ${String(details.note)}`);
 		}
+
 		if (details?.explanation) {
 			body.push("");
 			for (const line of String(details.explanation).split("\n")) body.push(line);
