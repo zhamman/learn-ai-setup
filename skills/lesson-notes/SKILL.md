@@ -1,20 +1,15 @@
 ---
 name: lesson-notes
-description: Keep teaching output as clean topic notes with separate quiz history in Obsidian. Use whenever the teach skill is active and the lesson-log extension is available.
+description: Keep teaching output as a current learning plan, clean topic notes, and separate quiz history in Obsidian. Use whenever the teach skill is active and the lesson-log extension is available.
 ---
 
 # Lesson Notes
 
-Use the `lesson-log` extension to keep durable topic knowledge separate from quiz history.
-
-## Core structure
-
-The learner chooses one subject directory with `/learn`.
-
-That subject contains exactly two learning-data directories:
+Use the `lesson-log` extension to keep three different learning artifacts separate:
 
 ```text
 <subject>/
+├── plan/
 ├── topic/
 └── quiz/
 ```
@@ -23,6 +18,8 @@ For example:
 
 ```text
 ai-engineering/
+├── plan/
+│   └── context-engineering.md
 ├── topic/
 │   ├── context-window.md
 │   └── tool-calling.md
@@ -32,9 +29,11 @@ ai-engineering/
     └── tool-calling-lesson.md
 ```
 
-`topic/` is the clean knowledge base. `quiz/` is the learner's testing history.
+`plan/` is the current learning roadmap.
+`topic/` is the clean durable knowledge base.
+`quiz/` is the learner's testing history.
 
-Ordinary chat is not copied into either directory.
+Ordinary chat is not copied into any of them.
 
 ## At the start of a learning session
 
@@ -56,9 +55,7 @@ Do not silently invent or change the learner's subject directory.
 
 ## Opening diagnostic quiz
 
-When `teach` begins by probing the learner's existing understanding with a quiz, preserve that quiz separately before instruction starts.
-
-Before the FIRST diagnostic/probe quiz, call:
+Before the FIRST pre-instruction knowledge-check quiz, call:
 
 ```text
 lesson_quiz_context({
@@ -67,7 +64,7 @@ lesson_quiz_context({
 })
 ```
 
-Example for a user who asked to learn context engineering:
+Example:
 
 ```text
 lesson_quiz_context({
@@ -76,7 +73,7 @@ lesson_quiz_context({
 })
 ```
 
-The diagnostic quiz is then captured in:
+All questions used to gauge the learner before teaching begins should remain in:
 
 ```text
 quiz/context-engineering-diagnostic.md
@@ -84,7 +81,57 @@ quiz/context-engineering-diagnostic.md
 
 Use the overall lesson being assessed, not the first dependency concept, for the diagnostic filename.
 
-All questions used to gauge the learner BEFORE teaching begins should remain in that diagnostic file.
+## Overall learning plan
+
+After the diagnostic/probe, use what the learner demonstrated to build the dependency map and learning sequence.
+
+Save the current roadmap with:
+
+```text
+lesson_plan({
+  topic: "<overall-requested-lesson-slug>",
+  content: "<complete current plan body>"
+})
+```
+
+For context engineering this writes:
+
+```text
+plan/context-engineering.md
+```
+
+Use the same overall slug as the diagnostic when they refer to the same learning track.
+
+The plan should normally contain:
+
+```markdown
+## Goal
+
+## Starting Point
+
+## Dependency Map
+
+## Learning Sequence
+
+- [ ] Concept A
+- [ ] Concept B
+
+## Current Position
+
+## Next
+```
+
+The diagnostic should influence `Starting Point` and the sequence. Do not paste the full diagnostic transcript into the plan.
+
+`lesson_plan` REPLACES the previous plan body. Pass the complete latest plan each time so the file represents the current state rather than accumulating stale versions.
+
+Update the plan after meaningful changes such as:
+- the learner approves or changes the proposed sequence
+- a concept is completed
+- a prerequisite gap is discovered
+- the current position or next concept changes
+
+Do not rewrite it for every conversational turn.
 
 ## Automatic topic switching
 
@@ -102,34 +149,14 @@ lesson_note({ topic: "tool-calling" })
 lesson_note({ topic: "agent-harness" })
 ```
 
-This does two things automatically:
+This automatically:
 
 1. activates `topic/<concept>.md`
 2. routes subsequent quizzes to `quiz/<concept>-lesson.md`
 
-So after:
+Reuse the same concept slug when revisiting a concept. Do not create `topic-2`, `part-2`, or date-based duplicates.
 
-```text
-lesson_note({ topic: "context-window" })
-```
-
-Pi writes durable knowledge to:
-
-```text
-topic/context-window.md
-```
-
-and lesson quizzes to:
-
-```text
-quiz/context-window-lesson.md
-```
-
-Do not call `lesson_quiz_context` for ordinary concept quizzes unless there is a specific reason to override routing. `lesson_note` already handles it.
-
-Reuse the exact same concept slug when revisiting a concept. Do not create `topic-2`, `part-2`, or date-based duplicates.
-
-Do not switch topic notes merely because:
+Do not switch concept notes merely because:
 - the learner asked a clarification
 - a quiz occurred
 - a researcher was consulted
@@ -164,12 +191,11 @@ Do not write:
 - researcher/subagent chatter
 - tool-call descriptions
 - quiz questions or quiz results
+- the overall learning roadmap
 
-Quiz content belongs only under `quiz/` and is captured automatically.
+The roadmap belongs under `plan/`. Quiz content belongs under `quiz/`.
 
 ## Quiz behavior
-
-Every completed quiz question is stored with its result in the current quiz file.
 
 Diagnostic quizzes go to:
 
@@ -183,7 +209,7 @@ Quizzes during instruction go to:
 quiz/<current-concept>-lesson.md
 ```
 
-Each file preserves quiz chronology as:
+Each completed question/result pair is preserved chronologically:
 
 ```text
 ## Quiz 1
@@ -202,15 +228,17 @@ Do not duplicate quiz content with `lesson_write`.
 When using `teach`:
 
 1. Determine the overall lesson/topic the learner requested.
-2. Before any opening assessment quiz, call `lesson_quiz_context` with that overall slug and `phase: "diagnostic"`.
-3. Probe the learner's existing understanding. The diagnostic is stored under `quiz/`.
-4. Build and present the dependency map.
-5. Wait for approval before teaching.
-6. Before the first concept, call `lesson_note` for that concept.
-7. Teach conversationally.
-8. Call `lesson_write` with the distilled durable version.
-9. Quiz the concept. The quiz is automatically stored in `quiz/<concept>-lesson.md`.
-10. If clarification materially improves the durable note, save only the new useful material with `lesson_write`.
-11. When moving to the next concept, call `lesson_note` first; both the topic-note target and lesson-quiz target switch automatically.
+2. Before the opening assessment, call `lesson_quiz_context` with the overall slug and `phase: "diagnostic"`.
+3. Probe the learner. Store the pre-instruction baseline under `quiz/`.
+4. Build a dependency map and learning sequence informed by the diagnostic.
+5. Call `lesson_plan` with the overall slug and complete proposed plan.
+6. Present the plan and wait for learner approval before teaching.
+7. If the learner changes the plan, update `lesson_plan` with the complete revised version.
+8. Before the first concept, call `lesson_note` for that concept.
+9. Teach conversationally.
+10. Call `lesson_write` with the distilled durable version.
+11. Quiz the concept. It is automatically stored in `quiz/<concept>-lesson.md`.
+12. When a concept is meaningfully complete, update `lesson_plan` to mark progress and set `Current Position` / `Next`.
+13. When moving to the next concept, call `lesson_note` first; both topic-note and lesson-quiz routing switch automatically.
 
 The topic boundary follows the knowledge dependency graph, not arbitrary chat turns.
