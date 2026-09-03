@@ -36,6 +36,21 @@ When the learner supplies images, screenshots, a PDF, code, or notes and asks to
 
 Source-backed courses keep copied originals and readable excerpts in `source/`, with manifests under `.learning/sources/`. Each plan step cites inspected excerpts or explicitly explains its added prerequisite/context; lesson notes inherit those references. The mini-project remains constrained by that curriculum. Flag unreadable or incomplete material rather than filling its gaps with guesses.
 
+### Repository source guardrails
+
+When the supplied material is a local repository/directory, startup must stay cheap and bounded. The goal is to get to the diagnostic quickly, not to ingest the repository up front.
+
+- Use at most **3 lightweight shell mapping calls before the first diagnostic**. Each call must have one narrow purpose, such as listing top-level structure, reading a manifest, or locating one likely entrypoint.
+- Do **not** build long `&&` chains combining `find`, `rg`, `wc`, `head`, and multiple directory scans into one shell call. Prefer short bounded commands with explicit paths and depth limits.
+- If a mapping shell call times out once, **do not retry broader or equivalent variants**. Use the partial information already returned, narrow the scope, or move on to the diagnostic.
+- Before the first diagnostic, call `lesson_source` for at most **3 anchor files total**. Typical anchors are a root README/architecture note, one package/workspace manifest, and one goal-relevant entrypoint/module.
+- Run those initial `lesson_source` imports **sequentially, never in parallel**. Keep each text excerpt small; request only the lines needed for the map instead of accepting a full 200-line default when a shorter range is enough.
+- Do not import extra files merely to increase confidence. Once the purpose, major boundaries, likely entry flow, and 1–3 learning strands are clear enough to ask useful diagnostic questions, stop inspecting and begin the diagnostic immediately.
+- Additional repo files are imported **just-in-time during the specific lesson node that needs them**. This is the default path for large repos and monorepos.
+- A timeout is a signal to reduce work, not to compensate by launching more source imports or more expensive searches.
+
+These limits apply regardless of whether Pi is running directly, in tmux, or inside Herdr.
+
 ## Visible design principles
 
 Visible files are documents for a human to read, not databases.
