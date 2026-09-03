@@ -17,6 +17,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { validateProject, validateReview, renderProject, projectStatus } from "./lib/mini-project.ts";
 import type { ProjectSpec, ProjectState, ProjectReview } from "./lib/mini-project.ts";
+import { readLessonSource, loadSource, validateSourceRefs, renderSourceRefs, importAttachedImages } from "./lib/lesson-sources.ts";
+import type { SourceRef } from "./lib/lesson-sources.ts";
 
 type QuizPhase = "diagnostic" | "lesson";
 type LifecyclePhase = "idle" | "diagnostic" | "planning" | "teaching" | "assessment" | "finished";
@@ -55,6 +57,8 @@ type PlanStep = {
 	title: string;
 	description?: string;
 	state: StepState;
+	sources?: SourceRef[];
+	supplementalReason?: string;
 };
 
 type HiddenState = {
@@ -69,6 +73,7 @@ type HiddenState = {
 	};
 	plan?: {
 		topic?: string;
+		sourceIds?: string[];
 		steps: PlanStep[];
 		currentPosition: string;
 		next: string;
@@ -95,6 +100,11 @@ const LessonStartParams = Type.Object({
 	topic: Type.String({ description: "Stable slug for the overall learning track." }),
 	title: Type.Optional(Type.String({ description: "Optional readable title." })),
 });
+
+const SourceRefsParams = Type.Array(Type.Object({
+	sourceId: Type.String({ description: "Exact source ID returned by lesson_source." }),
+	unit: Type.String({ description: "Exact inspected unit, e.g. page-2, image-1, or lines-1-80." }),
+}));
 
 const ProjectSpecParams = Type.Object({
 	title: Type.String(),
@@ -132,11 +142,14 @@ const LessonPlanParams = Type.Object({
 				Type.Literal("upcoming"),
 				Type.Literal("skipped"),
 			]),
+			sources: Type.Optional(SourceRefsParams),
+			supplementalReason: Type.Optional(Type.String({ description: "Explicitly label prerequisite/explanation added beyond the supplied material and why it is necessary." })),
 		}),
 		{ minItems: 1, description: "Adaptive learning path in dependency order." },
 	),
 	currentPosition: Type.String({ description: "Hidden lifecycle state for the current position." }),
 	next: Type.String({ description: "Hidden lifecycle state for what comes next." }),
+	sourceIds: Type.Optional(Type.Array(Type.String(), { description: "Imported material anchoring this course. Omit on updates to preserve; use [] only when intentionally removing source binding." })),
 	miniProject: Type.Optional(ProjectSpecParams),
 	reviseProject: Type.Optional(Type.Boolean({ description: "Explicitly revise a reviewed project after discussing scope changes with the learner. Invalidates the prior review, never edits learner code." })),
 });
@@ -147,6 +160,7 @@ const LessonNoteParams = Type.Object({
 	summary: Type.Optional(Type.String({ description: "Optional one-sentence deck under the title." })),
 	prerequisites: Type.Optional(Type.Array(Type.String())),
 	related: Type.Optional(Type.Array(Type.String())),
+	sources: Type.Optional(SourceRefsParams),
 	requiresCode: Type.Optional(
 		Type.Boolean({ description: "True when full understanding of this concept requires successful implementation/debugging/querying code." }),
 	),
@@ -234,7 +248,7 @@ function renderStep(step: PlanStep, index: number): string {
 	return `${index + 1}. **${step.title.trim()}**${suffix}${description}`;
 }
 
-function renderPlan(title: string, summary: string | undefined, goal: string, startingPoint: string, dependencyMap: string, steps: PlanStep[]): string {
+function renderPlan(title: string, summary: string | undefined, goal: string, startingPoint: string, dependencyMap: string, steps: PlanStep[], subjectDir: string): string {
 	const parts = [`# ${title.trim() || "Learning Plan"}`];
 	if (summary?.trim()) parts.push("", summary.trim());
 	parts.push(
@@ -253,7 +267,10 @@ function renderPlan(title: string, summary: string | undefined, goal: string, st
 		"",
 		"## Path",
 		"",
-		steps.map(renderStep).join("\n\n"),
+		steps.map((step, index) => [renderStep(step, index),
+			step.sources?.length ? renderSourceRefs(subjectDir, step.sources) : "",
+			step.supplementalReason ? `Additional prerequisite/context: ${step.supplementalReason}` : "",
+		].filter(Boolean).join("\n\n")).join("\n\n"),
 	);
 	return `${parts.join("\n").trim()}\n`;
 }
@@ -478,6 +495,12 @@ export default function lessonLog(pi: ExtensionAPI) {
 		},
 	});
 
+	pi.on("input", async (event, ctx: any) => {
+		if (!subjectDir || !event.images?.length || event.source === "extension") return;
+		const messages = await importAttachedImages(subjectDir, event.images, ctx.model?.input?.includes("image") === true);
+		return { action: "transform", text: `${event.text}\n\nLearning source references:\n${messages.join("\n")}`, images: event.images };
+	});
+
 	pi.registerCommand("lesson-status", {
 		description: "Show current learning state",
 		handler: async (_args, ctx: any) => {
@@ -515,6 +538,26 @@ export default function lessonLog(pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
+		name: "lesson_source",
+		label: "read lesson source",
+		description: "Import/read learner-selected local images, screenshots, PDFs, or UTF-8 text/code as source material. Returns text and image content plus stable page/line locators. Does not execute code. PDFs require local Poppler. Read large files in bounded ranges; never claim unread content was covered.",
+		promptSnippet: "For 'teach me this file/screenshot/PDF/code', use lesson_source before diagnosing/planning. Inspect actual images and PDF figures with a vision model, flag uncertainty, then cite returned sourceId/unit in the plan and notes.",
+		parameters: Type.Object({
+			file: Type.Optional(Type.String({ description: "Learner-selected local file path; provide file OR sourceId." })),
+			sourceId: Type.Optional(Type.String({ description: "Read another part of an already imported source." })),
+			title: Type.Optional(Type.String()),
+			start: Type.Optional(Type.Integer({ minimum: 1, description: "First line for text/code, or first PDF page. Defaults to 1." })),
+			end: Type.Optional(Type.Integer({ minimum: 1, description: "Last line/page; maximum 200 lines or 3 PDF pages per call." })),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx: any) {
+			if (!subjectDir) return { content: [{ type: "text", text: "Run /learn <subject> first." }], details: { status: "no-subject" } };
+			const activeSubject = subjectDir;
+			const result = await readLessonSource(activeSubject, ctx.cwd, params, ctx.model?.input?.includes("image") === true);
+			return { content: result.content, details: { status: "read", sourceId: result.source.id, kind: result.source.kind, total: result.source.total, units: result.readUnits, warnings: result.warnings, file: path.join(activeSubject, "source", result.source.id, "index.md") } };
+		},
+	});
+
+	pi.registerTool({
 		name: "lesson_plan",
 		label: "lesson plan",
 		description: "Write a learning roadmap and its immediately visible mini-project. miniProject is required on first creation (including old plans missing one); omit on updates to preserve it. All project concepts/tools must be within the curriculum or evidenced prior knowledge.",
@@ -527,13 +570,28 @@ export default function lessonLog(pi: ExtensionAPI) {
 			if (!slug || !file) return { content: [{ type: "text", text: "Invalid plan topic." }], details: { status: "invalid-topic" } };
 			if (trackSlug && trackSlug !== slug) return { content: [{ type: "text", text: "Use lesson_start to switch tracks before replacing its plan." }], details: { status: "track-mismatch" } };
 			const title = params.title?.trim() || trackTitle || titleFromSlug(slug);
+			const state = readHiddenState();
+			const oldPlan = state.plan?.topic === slug ? state.plan : undefined;
 			const steps: PlanStep[] = params.steps.map((step: any) => ({
 				topic: slugify(step.topic),
 				title: String(step.title).trim(),
 				description: step.description ? String(step.description).trim() : undefined,
 				state: step.state as StepState,
+				sources: step.sources ?? oldPlan?.steps.find(item => item.topic === slugify(step.topic))?.sources,
+				supplementalReason: step.supplementalReason ?? oldPlan?.steps.find(item => item.topic === slugify(step.topic))?.supplementalReason,
 			})).filter((step: PlanStep) => step.topic && step.title);
-			const state = readHiddenState();
+			const sourceIds = [...new Set<string>(params.sourceIds ?? oldPlan?.sourceIds ?? steps.flatMap(step => (step.sources || []).map(ref => ref.sourceId)))];
+			const sourceErrors: string[] = [];
+			for (const id of sourceIds) {
+				try { loadSource(subjectDir, id); } catch (error) { sourceErrors.push((error as Error).message); }
+				if (!steps.some(step => step.sources?.some(ref => ref.sourceId === id))) sourceErrors.push(`Source ${id} is selected but no plan step uses an inspected excerpt from it.`);
+			}
+			for (const step of steps) {
+				sourceErrors.push(...validateSourceRefs(subjectDir, step.sources || []));
+				if (sourceIds.length && !step.sources?.length && !step.supplementalReason?.trim()) sourceErrors.push(`${step.title}: cite inspected material or label the additional prerequisite/context.`);
+				if (step.sources?.some(ref => !sourceIds.includes(ref.sourceId))) sourceErrors.push(`${step.title}: cited source is not included in sourceIds.`);
+			}
+			if (sourceErrors.length) return { content: [{ type: "text", text: sourceErrors.join("\n") }], details: { status: "source-invalid", errors: sourceErrors } };
 			const previous = state.projects?.[slug];
 			const spec = (params.miniProject || previous?.spec) as ProjectSpec | undefined;
 			if (!spec) return { content: [{ type: "text", text: "Include miniProject with the initial plan. The project must be available before teaching starts." }], details: { status: "project-required" } };
@@ -543,11 +601,11 @@ export default function lessonLog(pi: ExtensionAPI) {
 			if (changed && previous.review && params.reviseProject !== true) return { content: [{ type: "text", text: "This project has reviewed work. Discuss the scope revision, then use reviseProject to replace the specification and invalidate its review. Learner code is preserved." }], details: { status: "project-revision-required" } };
 			state.projects ||= {};
 			state.projects[slug] = previous && !changed ? previous : { spec };
-			state.plan = { topic: slug, steps, currentPosition: params.currentPosition.trim(), next: params.next.trim() };
+			state.plan = { topic: slug, sourceIds, steps, currentPosition: params.currentPosition.trim(), next: params.next.trim() };
 			const projectFile = refreshProject(state);
 			fs.mkdirSync(path.dirname(file), { recursive: true });
 			const projectLink = `\n## Mini-project\n\n[${spec.title}](${slug}-project.md) — ${spec.estimatedHours} focused hours. Full specification available now; requirements become ready as you learn. Start whenever you choose.\n`;
-			fs.writeFileSync(file, renderPlan(title, params.summary, params.goal, params.startingPoint, params.dependencyMap, steps) + projectLink, "utf-8");
+			fs.writeFileSync(file, renderPlan(title, params.summary, params.goal, params.startingPoint, params.dependencyMap, steps, subjectDir) + projectLink, "utf-8");
 			planFile = file;
 			trackSlug = trackSlug || slug;
 			trackTitle = trackTitle || title;
@@ -601,14 +659,24 @@ export default function lessonLog(pi: ExtensionAPI) {
 			if (!subjectDir) return { content: [{ type: "text", text: "Run /learn first." }], details: { status: "no-subject" } };
 			const slug = slugify(params.topic);
 			const title = params.title?.trim() || titleFromSlug(slug);
+			const state = readHiddenState();
+			const step = state.plan?.steps.find(item => item.topic === slug);
+			const sources = params.sources ?? step?.sources ?? [];
+			const errors = validateSourceRefs(subjectDir, sources);
+			if (state.plan?.sourceIds?.length && !sources.length && !step?.supplementalReason?.trim()) errors.push("This course is based on supplied material. Cite inspected sources or add an explicit supplemental step to the plan first.");
+			if (state.plan?.sourceIds?.length && sources.some(ref => !state.plan!.sourceIds!.includes(ref.sourceId))) errors.push("Add the new source to the plan before citing it in this lesson.");
+			if (errors.length) return { content: [{ type: "text", text: errors.join("\n") }], details: { status: "source-invalid", errors } };
 			const file = ensureTopic(slug, title, params.summary);
 			if (!slug || !file) return { content: [{ type: "text", text: "Invalid concept topic." }], details: { status: "invalid-topic" } };
 			lessonSlug = slug;
 			lessonFile = file;
 			const assessmentFile = setQuizContext(slug, "lesson");
 			lifecycle = "teaching";
-			const state = readHiddenState();
 			const topic = ensureTopicState(state, slug, title, file);
+			if (sources.length || step?.supplementalReason) {
+				const referenceText = [sources.length ? renderSourceRefs(subjectDir, sources) : "", step?.supplementalReason ? `Additional prerequisite/context: ${step.supplementalReason}` : ""].filter(Boolean).join("\n\n");
+				fs.writeFileSync(file, upsertSection(fs.readFileSync(file, "utf8"), "Sources", referenceText) + "\n");
+			}
 			topic.title = title;
 			topic.file = file;
 			topic.prerequisites = params.prerequisites === undefined ? topic.prerequisites : normalizeSlugs(params.prerequisites, slug);

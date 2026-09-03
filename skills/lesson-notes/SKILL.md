@@ -1,6 +1,6 @@
 ---
 name: lesson-notes
-description: Use Obsidian as the clean learner-facing interface for adaptive plans, scoped mini-projects, lesson notes, conceptual quizzes, and coding exercises. Machine state stays hidden under .learning/.
+description: Use Obsidian for adaptive learning from topics or supplied images, screenshots, PDFs, notes, and code: source-linked plans, scoped mini-projects, lessons, quizzes, and coding exercises. Machine state stays hidden under .learning/.
 ---
 
 # Lesson Notes
@@ -29,6 +29,12 @@ Internal state lives separately and should not be treated as a human note:
 Never copy machine metadata into the visible Markdown. The learner does not want frontmatter fields such as status, confidence, date, completion, quiz totals, scores, or internal lifecycle state in lesson/plan/quiz documents.
 
 The Pi Learning Obsidian plugin renders `learning-quiz` and `learning-code` blocks as the interactive UI. Do not imitate application controls with Markdown task checkboxes or callout boxes.
+
+## Teach from supplied material
+
+When the learner supplies images, screenshots, a PDF, code, or notes and asks to learn from them, read [references/source-materials.md](references/source-materials.md). Inspect the material **before** constructing the diagnostic or plan. Use `lesson_source` to import files and return page images/text with stable locators. Pasted images submitted after `/learn` are saved automatically and their source references are attached to the input.
+
+Source-backed courses keep copied originals and readable excerpts in `source/`, with manifests under `.learning/sources/`. Each plan step cites inspected excerpts or explicitly explains its added prerequisite/context; lesson notes inherit those references. The mini-project remains constrained by that curriculum. Flag unreadable or incomplete material rather than filling its gaps with guesses.
 
 ## Visible design principles
 
