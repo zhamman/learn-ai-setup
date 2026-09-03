@@ -14,7 +14,9 @@ This is a personal system I built for myself, shared as-is. Built as a pi config
 - `extensions/quiz/` — graded questions with instant feedback (✓/✗, correct answer, explanation)
 - `extensions/md-log/` — link a markdown file to the session
 - `extensions/visual-tools/` — tools for visualization subagents
-- `agents/` — `researcher`, `svg-maker`, `mermaid-maker`: the subagents the system delegates to
+- `agents/` — `researcher`, `repo-researcher`, `svg-maker`, `mermaid-maker`: the subagents the system delegates to
+
+`repo-researcher` is a read-only local-repository reconnaissance worker. For medium/large repos, the teacher can delegate a few non-overlapping subsystem scans, receive compressed architecture briefs, and keep raw source out of the main teaching context until a lesson actually needs it.
 
 ## Install
 
@@ -29,11 +31,16 @@ Then open pi in that directory. (Or copy the pieces you want into your existing 
 ## Requirements
 
 - [pi](https://github.com/earendil-works/pi)
-- A subagent implementation, so the system can spawn the researcher and the visual makers. Recommended: [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents) (tmux only). With it, everything works out of the box. Any other implementation works too, but expect to adapt the agent definitions, e.g. `agents/researcher.md` lists `safe_bash` in its tools, which is specific to that extension.
+- One subagent implementation that matches the terminal environment where Pi runs:
+  - **Herdr:** `pi install npm:pi-herdr-subagents`
+  - **tmux/cmux/zellij/WezTerm:** `pi install git:github.com/HazAT/pi-interactive-subagents`
+  Use one implementation for the active environment; both expose the `subagent` workflow used by these agent definitions.
 - `ask-user-question` — use the copy bundled here. If your setup already has an `ask-user-question` extension, use **this** one in its place. Popups from different extensions serialize through a shared UI lock, which only works when it's the same implementation.
+
+`agents/researcher.md` includes `safe_bash`, which comes from the interactive-subagent setup this project was originally built around. If a different implementation does not provide that tool, adapt that agent definition. `repo-researcher` intentionally avoids bash entirely and uses only `read`, `grep`, `find`, and `ls`.
 
 ## Notes
 
-You can run the system without subagents. The main session does the teaching. You just lose the researcher (truth verification) and the generated visuals.
+You can run the system without subagents. The main session does the teaching. You just lose web-research verification, repo-reconnaissance compression for large codebases, and generated visuals.
 
 The teaching skill is written for one learner (me). Edit the skill to fit how you learn best.
