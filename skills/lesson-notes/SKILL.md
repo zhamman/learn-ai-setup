@@ -1,6 +1,6 @@
 ---
 name: lesson-notes
-description: Use Obsidian for adaptive learning from topics or supplied images, screenshots, PDFs, notes, and code: source-linked plans, scoped mini-projects, lessons, quizzes, and coding exercises. Machine state stays hidden under .learning/.
+description: "Use Obsidian for adaptive learning from topics or supplied images, screenshots, PDFs, notes, and code: source-linked plans, scoped mini-projects, lessons, quizzes, and coding exercises. Machine state stays hidden under .learning/."
 ---
 
 # Lesson Notes
