@@ -31,8 +31,13 @@ Then open pi in that directory. (Or copy the pieces you want into your existing 
 ## Requirements
 
 - [pi](https://github.com/earendil-works/pi)
-- A subagent implementation, so the system can spawn the researcher, repo researcher, and visual makers. Recommended: [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents) (tmux only). With it, everything works out of the box. Any other implementation works too, but expect to adapt the agent definitions, e.g. `agents/researcher.md` lists `safe_bash` in its tools, which is specific to that extension.
+- One subagent implementation that matches the terminal environment where Pi runs:
+  - **Herdr:** `pi install npm:pi-herdr-subagents`
+  - **tmux/cmux/zellij/WezTerm:** `pi install git:github.com/HazAT/pi-interactive-subagents`
+  Use one implementation for the active environment; both expose the `subagent` workflow used by these agent definitions.
 - `ask-user-question` — use the copy bundled here. If your setup already has an `ask-user-question` extension, use **this** one in its place. Popups from different extensions serialize through a shared UI lock, which only works when it's the same implementation.
+
+`agents/researcher.md` includes `safe_bash`, which comes from the interactive-subagent setup this project was originally built around. If a different implementation does not provide that tool, adapt that agent definition. `repo-researcher` intentionally avoids bash entirely and uses only `read`, `grep`, `find`, and `ls`.
 
 ## Notes
 
